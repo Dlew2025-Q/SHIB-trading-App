@@ -50,9 +50,14 @@ async def disconnect_from_db():
 
 async def create_trades_table():
     async with db_pool.acquire() as conn:
-        # Create table if it doesn't exist
+        # TEMPORARY: Drop table to ensure clean schema for testing
+        # WARNING: This will delete all existing data in 'simulated_trades' table!
+        await conn.execute('DROP TABLE IF EXISTS simulated_trades CASCADE;')
+        print("TEMPORARY: Dropped 'simulated_trades' table.")
+
+        # Create table with all expected columns
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS simulated_trades (
+            CREATE TABLE simulated_trades (
                 id BIGINT PRIMARY KEY,
                 signal_type VARCHAR(10) NOT NULL,
                 entry_price NUMERIC(20, 8) NOT NULL,
@@ -64,29 +69,19 @@ async def create_trades_table():
                 profit_loss NUMERIC(20, 8),
                 timestamp BIGINT NOT NULL,
                 ai_reasoning TEXT,
-                sentiment_score NUMERIC(10, 8) -- New column for sentiment score
+                sentiment_score NUMERIC(10, 8)
             );
         ''')
-        print("simulated_trades table checked/created.")
+        print("simulated_trades table created with full schema.")
 
-        # Check and add 'ai_reasoning' column if it doesn't exist (for schema migration)
-        try:
-            await conn.execute("ALTER TABLE simulated_trades ADD COLUMN ai_reasoning TEXT;")
-            print("Added 'ai_reasoning' column to 'simulated_trades' table.")
-        except asyncpg.exceptions.DuplicateColumnError:
-            print("'ai_reasoning' column already exists.")
-        except Exception as e:
-            print(f"WARNING: Could not add 'ai_reasoning' column: {e}")
+# --- FastAPI Lifecycle Events (connect/disconnect DB) ---
+@app.on_event("startup")
+async def startup_event():
+    await connect_to_db()
 
-        # Check and add 'sentiment_score' column if it doesn't exist (for schema migration)
-        try:
-            await conn.execute("ALTER TABLE simulated_trades ADD COLUMN sentiment_score NUMERIC(10, 8);")
-            print("Added 'sentiment_score' column to 'simulated_trades' table.")
-        except asyncpg.exceptions.DuplicateColumnError:
-            print("'sentiment_score' column already exists.")
-        except Exception as e:
-            print(f"WARNING: Could not add 'sentiment_score' column: {e}")
-
+@app.on_event("shutdown")
+async def shutdown_event():
+    await disconnect_from_db()
 
 # --- Helper function to make CoinGecko API calls ---
 async def fetch_coingecko_data(url: str):
@@ -122,23 +117,19 @@ async def fetch_senticrypt_data():
             response.raise_for_status()
             data = response.json()
             
-            # SentiCrypt returns data for multiple dates. Find the latest available.
-            # Data is ordered from newest to oldest.
             if data:
-                # Find the most recent date's sentiment score (mean)
-                # SentiCrypt data is for BTC, not SHIB specifically.
                 latest_sentiment = data[0] # Assuming the first entry is the most recent
                 return latest_sentiment.get('mean')
             return None
         except httpx.HTTPStatusError as e:
             print(f"HTTP Error fetching SentiCrypt data: {e.response.status_code} - {e.response.text}")
-            return None # Return None on error
+            return None
         except httpx.RequestError as e:
             print(f"Network Error fetching SentiCrypt data: {e}")
-            return None # Return None on error
+            return None
         except Exception as e:
             print(f"Unexpected Error fetching SentiCrypt data: {e}")
-            return None # Return None on error
+            return None
 
 
 # --- Backend Endpoints ---
@@ -250,6 +241,7 @@ async def ai_suggest_profit(request_body: dict):
         print(f"Unexpected Error during AI profit suggestion: {e}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI profit suggestion: {e}")
 
+
 # Endpoint for AI-driven trade signal
 @app.post("/ai-trade-signal")
 async def ai_trade_signal(request_body: dict):
@@ -258,12 +250,11 @@ async def ai_trade_signal(request_body: dict):
     price_change_24h = request_body.get("price_change_24h")
     historical_prices = request_body.get("historical_prices", [])
     strategy_name = request_body.get("strategy_name")
-    sentiment_filter_enabled = request_body.get("sentiment_filter_enabled", False) # Get sentiment filter status
+    sentiment_filter_enabled = request_body.get("sentiment_filter_enabled", False)
 
     if current_price is None or not historical_prices:
         raise HTTPException(status_code=400, detail="Missing current_price or historical_prices for AI signal.")
 
-    # Fetch sentiment data if filter is enabled
     current_sentiment_score = None
     if sentiment_filter_enabled:
         current_sentiment_score = await fetch_senticrypt_data()
@@ -273,7 +264,6 @@ async def ai_trade_signal(request_body: dict):
             print(f"Fetched current sentiment score: {current_sentiment_score}")
 
 
-    # Construct a detailed prompt for the AI
     prompt_parts = [
         f"Analyze the recent price movements of Shiba Inu (SHIB) based on the following data:",
         f"- Current Price: ${current_price}",
@@ -355,6 +345,8 @@ async def save_trade(trade_data: dict):
         raise HTTPException(status_code=500, detail="Database connection not established.")
 
     try:
+        # Ensure numeric values are converted to float for database storage
+        # Use .get() with default None to handle potential missing keys gracefully
         trade_data['entryPrice'] = float(trade_data.get('entryPrice'))
         trade_data['takeProfitPrice'] = float(trade_data.get('takeProfitPrice'))
         trade_data['stopLossPrice'] = float(trade_data.get('stopLossPrice'))
@@ -362,8 +354,10 @@ async def save_trade(trade_data: dict):
         trade_data['profitLoss'] = float(trade_data.get('profitLoss')) if trade_data.get('profitLoss') is not None else None
         trade_data['outcomePrice'] = float(trade_data.get('outcomePrice')) if trade_data.get('outcomePrice') is not None else None
         trade_data['ai_reasoning'] = trade_data.get('aiReasoning', '')
+        # Ensure sentimentScore is converted to float if present, otherwise None
         trade_data['sentiment_score'] = float(trade_data.get('sentimentScore')) if trade_data.get('sentimentScore') is not None else None
     except (ValueError, TypeError) as e:
+        print(f"ERROR: Invalid numeric data in trade for /save-trade: {e} - Data: {trade_data}")
         raise HTTPException(status_code=400, detail=f"Invalid numeric data in trade: {e}")
 
     async with db_pool.acquire() as conn:
