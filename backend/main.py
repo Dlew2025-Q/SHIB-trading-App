@@ -2,50 +2,91 @@
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import httpx # Used to make web requests from your backend (like fetching data from CoinGecko/Gemini)
-import os    # Used to read secret keys and URLs safely from Render's environment
-import asyncio # Import asyncio for sleep
+import httpx
+import os
+import asyncio
+import asyncpg # New import for async PostgreSQL driver
+import json # To handle JSON serialization for database storage
 
 app = FastAPI()
 
-# This is SUPER IMPORTANT for web apps!
-# It tells your backend that your frontend (which will be on a different web address)
-# is allowed to talk to it. Without this, your browser will block the communication.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In a real, secure app, you'd put your frontend's exact URL here (e.g., "https://your-frontend.render.com")
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all HTTP methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Get your CoinGecko API key from Render's environment variables
-# You will set COINGECKO_API_KEY in Render later
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
 if not COINGECKO_API_KEY:
     print("WARNING: COINGECKO_API_KEY environment variable is not set!")
 
-# The Gemini API key is automatically provided by Canvas for specific models.
-# If you were deploying this completely outside Canvas and needed a Gemini API key
-# for a paid tier or specific model, you'd set it as an environment variable too.
-# For now, we'll use an empty string as instructed for Canvas's automatic injection.
-GEMINI_API_KEY = "" # Render's environment might also provide this if configured
+GEMINI_API_KEY = "" # Handled by Canvas or can be set as env var for direct deployment
+
+# Database connection pool (best practice for async apps)
+db_pool = None
+
+# --- Database Setup Functions ---
+async def connect_to_db():
+    global db_pool
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        print("ERROR: DATABASE_URL environment variable is not set!")
+        return
+
+    try:
+        db_pool = await asyncpg.create_pool(DATABASE_URL)
+        print("Successfully connected to PostgreSQL database.")
+        await create_trades_table() # Ensure table exists on startup
+    except Exception as e:
+        print(f"ERROR: Could not connect to database: {e}")
+
+async def disconnect_from_db():
+    global db_pool
+    if db_pool:
+        await db_pool.close()
+        print("Disconnected from PostgreSQL database.")
+
+async def create_trades_table():
+    async with db_pool.acquire() as conn:
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS simulated_trades (
+                id BIGINT PRIMARY KEY,
+                signal_type VARCHAR(10) NOT NULL,
+                entry_price NUMERIC(20, 8) NOT NULL,
+                take_profit_price NUMERIC(20, 8) NOT NULL,
+                stop_loss_price NUMERIC(20, 8) NOT NULL,
+                position_size NUMERIC(20, 8) NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                outcome_price NUMERIC(20, 8),
+                profit_loss NUMERIC(20, 8),
+                timestamp BIGINT NOT NULL
+            );
+        ''')
+        print("simulated_trades table checked/created.")
+
+# --- FastAPI Lifecycle Events (connect/disconnect DB) ---
+@app.on_event("startup")
+async def startup_event():
+    await connect_to_db()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await disconnect_from_db()
 
 # --- Helper function to make CoinGecko API calls ---
 async def fetch_coingecko_data(url: str):
-    # Add a small delay to be polite to CoinGecko's API and avoid rate limits
     await asyncio.sleep(0.5) # Wait for 0.5 seconds
 
     headers = {}
     if COINGECKO_API_KEY:
-        headers["x-cg-demo-api-key"] = COINGECKO_API_KEY # Add your API key if available
-    else:
-        print("CoinGecko API Key is missing. Proceeding without it, but requests might fail.")
+        headers["x-cg-demo-api-key"] = COINGECKO_API_KEY
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers, timeout=10.0) # Add a timeout
-            response.raise_for_status() # This will raise an error for 4xx/5xx responses
+            response = await client.get(url, headers=headers, timeout=10.0)
+            response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
             print(f"HTTP Error fetching CoinGecko data from {url}: {e.response.status_code} - {e.response.text}")
@@ -57,20 +98,14 @@ async def fetch_coingecko_data(url: str):
             print(f"Unexpected Error fetching CoinGecko data from {url}: {e}")
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
-# --- Backend Endpoints (Your Backend's Menu Items) ---
+# --- Backend Endpoints ---
 
-# 0. Root Endpoint (for health checks and direct visits)
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the SHIB Trading Analysis Backend API!"}
 
-# 1. Endpoint to get current SHIB prices and market stats
 @app.get("/shib-prices")
 async def get_shib_prices():
-    """
-    Fetches current market data for Shiba Inu from CoinGecko.
-    This replaces the direct CoinGecko call from the frontend.
-    """
     print("Received request for /shib-prices")
     market_data_url = 'https://api.coingecko.com/api/v3/coins/shiba-inu?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false'
     
@@ -79,7 +114,6 @@ async def get_shib_prices():
         market_data = data.get('market_data', {})
         print("Successfully fetched market data from CoinGecko.")
 
-        # Extract and return only the data points the frontend needs
         return {
             "current_price": market_data.get('current_price', {}).get('usd'),
             "price_change_24h": market_data.get('price_change_percentage_24h'),
@@ -89,37 +123,28 @@ async def get_shib_prices():
             "ath": market_data.get('ath', {}).get('usd')
         }
     except HTTPException:
-        raise # Re-raise the HTTPException
+        raise
     except Exception as e:
         print(f"Error in /shib-prices endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process SHIB prices: {e}")
 
-# 2. Endpoint to get historical data for AI analysis and outcome checks
 @app.get("/shib-historical-data")
 async def get_shib_historical_data():
-    """
-    Fetches historical market chart data for Shiba Inu (last 30 days) from CoinGecko.
-    This data is used by the frontend for AI profit suggestion and signal outcome checks.
-    """
     print("Received request for /shib-historical-data")
     chart_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=30"
     
     try:
         data = await fetch_coingecko_data(chart_url)
         print("Successfully fetched historical data from CoinGecko.")
-        return {"prices": data.get('prices', [])} # Return array of [timestamp, price]
+        return {"prices": data.get('prices', [])}
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error in /shib-historical-data endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process historical data: {e}")
 
-# 3. Endpoint for AI profit suggestion
 @app.post("/ai-suggest-profit")
 async def ai_suggest_profit(request_body: dict):
-    """
-    Sends historical price data to the Gemini API to get a suggested profit percentage.
-    """
     print("Received request for /ai-suggest-profit")
     historical_prices = request_body.get("historical_prices", [])
     current_price = request_body.get("current_price")
@@ -132,12 +157,11 @@ async def ai_suggest_profit(request_body: dict):
     chat_history = [{"role": "user", "parts": [{"text": prompt}]}]
     payload = {"contents": chat_history}
     
-    # Use the GEMINI_API_KEY if available, otherwise it will be empty for Canvas's auto-injection
     gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(gemini_api_url, json=payload, timeout=30.0) # Increased timeout for AI
+            response = await client.post(gemini_api_url, json=payload, timeout=30.0)
             response.raise_for_status()
             result = response.json()
         print("Successfully called Gemini API.")
@@ -163,28 +187,104 @@ async def ai_suggest_profit(request_body: dict):
         print(f"Unexpected Error during AI suggestion: {e}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI suggestion: {e}")
 
-# 4. Endpoint to check signal outcome (simulated using historical data)
+# New endpoint to save a simulated trade to the database
+@app.post("/save-trade")
+async def save_trade(trade_data: dict):
+    print("Received request for /save-trade")
+    if not db_pool:
+        raise HTTPException(status_code=500, detail="Database connection not established.")
+
+    # Ensure numeric values are converted to float for database storage
+    try:
+        trade_data['entryPrice'] = float(trade_data.get('entryPrice'))
+        trade_data['takeProfitPrice'] = float(trade_data.get('takeProfitPrice'))
+        trade_data['stopLossPrice'] = float(trade_data.get('stopLossPrice'))
+        trade_data['positionSize'] = float(trade_data.get('positionSize'))
+        trade_data['profitLoss'] = float(trade_data.get('profitLoss')) if trade_data.get('profitLoss') is not None else None
+        trade_data['outcomePrice'] = float(trade_data.get('outcomePrice')) if trade_data.get('outcomePrice') is not None else None
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid numeric data in trade: {e}")
+
+    async with db_pool.acquire() as conn:
+        try:
+            await conn.execute('''
+                INSERT INTO simulated_trades (id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, outcome_price, profit_loss, timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (id) DO UPDATE SET
+                    signal_type = EXCLUDED.signal_type,
+                    entry_price = EXCLUDED.entry_price,
+                    take_profit_price = EXCLUDED.take_profit_price,
+                    stop_loss_price = EXCLUDED.stop_loss_price,
+                    position_size = EXCLUDED.position_size,
+                    status = EXCLUDED.status,
+                    outcome_price = EXCLUDED.outcome_price,
+                    profit_loss = EXCLUDED.profit_loss,
+                    timestamp = EXCLUDED.timestamp;
+            ''',
+            trade_data['id'], trade_data['signalType'], trade_data['entryPrice'],
+            trade_data['takeProfitPrice'], trade_data['stopLossPrice'], trade_data['positionSize'],
+            trade_data['status'], trade_data['outcomePrice'], trade_data['profitLoss'],
+            trade_data['timestamp']
+            )
+            print(f"Trade {trade_data['id']} saved/updated in DB.")
+            return {"message": "Trade saved successfully"}
+        except Exception as e:
+            print(f"ERROR: Could not save trade to database: {e}")
+            raise HTTPException(status_code=500, detail=f"Database error saving trade: {e}")
+
+# New endpoint to load all simulated trades from the database
+@app.get("/get-all-trades")
+async def get_all_trades():
+    print("Received request for /get-all-trades")
+    if not db_pool:
+        raise HTTPException(status_code=500, detail="Database connection not established.")
+
+    async with db_pool.acquire() as conn:
+        try:
+            records = await conn.fetch('''
+                SELECT id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, outcome_price, profit_loss, timestamp
+                FROM simulated_trades ORDER BY timestamp DESC;
+            ''')
+            
+            trades = []
+            for record in records:
+                trade = {
+                    "id": record['id'],
+                    "signalType": record['signal_type'],
+                    "entryPrice": float(record['entry_price']), # Convert Decimal to float
+                    "takeProfitPrice": float(record['take_profit_price']),
+                    "stopLossPrice": float(record['stop_loss_price']),
+                    "positionSize": float(record['position_size']),
+                    "status": record['status'],
+                    "outcomePrice": float(record['outcome_price']) if record['outcome_price'] is not None else None,
+                    "profitLoss": float(record['profit_loss']) if record['profit_loss'] is not None else None,
+                    "timestamp": record['timestamp']
+                }
+                trades.append(trade)
+            print(f"Loaded {len(trades)} trades from DB.")
+            return {"trades": trades}
+        except Exception as e:
+            print(f"ERROR: Could not fetch trades from database: {e}")
+            raise HTTPException(status_code=500, detail=f"Database error fetching trades: {e}")
+
+# 4. Endpoint to check signal outcome (now updates DB)
 @app.post("/check-signal-outcome")
 async def check_signal_outcome(trade_details: dict):
-    """
-    Simulates checking the outcome of a trade signal against historical data.
-    """
     print("Received request for /check-signal-outcome")
     entry_price = trade_details.get("entryPrice")
     take_profit_price = trade_details.get("takeProfitPrice")
     stop_loss_price = trade_details.get("stopLossPrice")
     position_size = trade_details.get("positionSize")
     signal_type = trade_details.get("signalType")
-    timestamp = trade_details.get("timestamp") # This is in milliseconds from frontend
+    timestamp = trade_details.get("timestamp")
+    trade_id = trade_details.get("id") # Get the ID of the trade to update
 
-    if None in [entry_price, take_profit_price, stop_loss_price, position_size, signal_type, timestamp]:
+    if None in [entry_price, take_profit_price, stop_loss_price, position_size, signal_type, timestamp, trade_id]:
         raise HTTPException(status_code=400, detail="Missing trade details in request body.")
 
     try:
-        # Fetch historical data for a period after the signal was generated
-        # For simplicity, let's fetch data for the next 2 days from the signal timestamp
-        from_timestamp_s = timestamp / 1000 # Convert ms to seconds
-        to_timestamp_s = from_timestamp_s + (2 * 24 * 60 * 60) # 2 days later in seconds
+        from_timestamp_s = timestamp / 1000
+        to_timestamp_s = from_timestamp_s + (2 * 24 * 60 * 60)
         
         chart_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart/range?vs_currency=usd&from={from_timestamp_s}&to={to_timestamp_s}"
         
@@ -192,23 +292,25 @@ async def check_signal_outcome(trade_details: dict):
         prices = data.get('prices', [])
         print(f"Fetched {len(prices)} historical prices for outcome check.")
 
-        if not prices or len(prices) < 2: # Need at least 2 data points to see movement
+        if not prices or len(prices) < 2:
+            # Update DB status to pending if not enough data
+            if db_pool:
+                async with db_pool.acquire() as conn:
+                    await conn.execute("UPDATE simulated_trades SET status = $1 WHERE id = $2;", "pending", trade_id)
             return {
                 "status": "pending",
-                "outcomePrice": entry_price, # Default to entry price if no data
+                "outcomePrice": entry_price,
                 "profitLoss": 0,
                 "message": "Not enough historical data to determine outcome within the timeframe."
             }
 
         outcome = 'pending'
-        final_price = entry_price # Default to entry if no movement
+        final_price = entry_price
         profit_loss = 0
 
-        # Iterate through the prices after the entry to check for TP/SL hit
-        # Start from the first price after the signal's timestamp
         for price_data in prices:
             price = price_data[1]
-            final_price = price # Keep track of the last price seen
+            final_price = price
 
             if signal_type == 'LONG':
                 if price >= take_profit_price:
@@ -221,7 +323,16 @@ async def check_signal_outcome(trade_details: dict):
                 if price >= stop_loss_price:
                     outcome = 'loss'; break
         
-        print(f"Signal outcome determined: {outcome}")
+        # Update the trade in the database
+        if db_pool:
+            async with db_pool.acquire() as conn:
+                await conn.execute('''
+                    UPDATE simulated_trades
+                    SET status = $1, outcome_price = $2, profit_loss = $3
+                    WHERE id = $4;
+                ''', outcome, final_price, profit_loss, trade_id)
+            print(f"Trade {trade_id} outcome updated in DB: {outcome}")
+
         return {
             "status": outcome,
             "outcomePrice": final_price,
