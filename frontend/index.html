@@ -1,511 +1,349 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SHIB Trading Analysis</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
+# backend/main.py
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
+import os
+import asyncio
+import asyncpg # New import for async PostgreSQL driver
+import json # To handle JSON serialization for database storage
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
+if not COINGECKO_API_KEY:
+    print("WARNING: COINGECKO_API_KEY environment variable is not set!")
+
+GEMINI_API_KEY = "" # Handled by Canvas or can be set as env var for direct deployment
+
+# Database connection pool (best practice for async apps)
+db_pool = None
+
+# --- Database Setup Functions ---
+async def connect_to_db():
+    global db_pool
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        print("ERROR: DATABASE_URL environment variable is not set!")
+        return
+
+    try:
+        db_pool = await asyncpg.create_pool(DATABASE_URL)
+        print("Successfully connected to PostgreSQL database.")
+        await create_trades_table() # Ensure table exists on startup
+    except Exception as e:
+        print(f"ERROR: Could not connect to database: {e}")
+
+async def disconnect_from_db():
+    global db_pool
+    if db_pool:
+        await db_pool.close()
+        print("Disconnected from PostgreSQL database.")
+
+async def create_trades_table():
+    async with db_pool.acquire() as conn:
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS simulated_trades (
+                id BIGINT PRIMARY KEY,
+                signal_type VARCHAR(10) NOT NULL,
+                entry_price NUMERIC(20, 8) NOT NULL,
+                take_profit_price NUMERIC(20, 8) NOT NULL,
+                stop_loss_price NUMERIC(20, 8) NOT NULL,
+                position_size NUMERIC(20, 8) NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                outcome_price NUMERIC(20, 8),
+                profit_loss NUMERIC(20, 8),
+                timestamp BIGINT NOT NULL
+            );
+        ''')
+        print("simulated_trades table checked/created.")
+
+# --- FastAPI Lifecycle Events (connect/disconnect DB) ---
+@app.on_event("startup")
+async def startup_event():
+    await connect_to_db()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await disconnect_from_db()
+
+# --- Helper function to make CoinGecko API calls ---
+async def fetch_coingecko_data(url: str):
+    await asyncio.sleep(0.5) # Wait for 0.5 seconds
+
+    headers = {}
+    if COINGECKO_API_KEY:
+        headers["x-cg-demo-api-key"] = COINGECKO_API_KEY
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers, timeout=10.0)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            print(f"HTTP Error fetching CoinGecko data from {url}: {e.response.status_code} - {e.response.text}")
+            raise HTTPException(status_code=e.response.status_code, detail=f"CoinGecko API error: {e.response.text}")
+        except httpx.RequestError as e:
+            print(f"Network Error fetching CoinGecko data from {url}: {e}")
+            raise HTTPException(status_code=500, detail=f"Network error fetching CoinGecko data: {e}")
+        except Exception as e:
+            print(f"Unexpected Error fetching CoinGecko data from {url}: {e}")
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
+
+# --- Backend Endpoints ---
+
+@app.get("/")
+async def read_root():
+    return {"message": "Welcome to the SHIB Trading Analysis Backend API!"}
+
+@app.get("/shib-prices")
+async def get_shib_prices():
+    print("Received request for /shib-prices")
+    market_data_url = 'https://api.coingecko.com/api/v3/coins/shiba-inu?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false'
+    
+    try:
+        data = await fetch_coingecko_data(market_data_url)
+        market_data = data.get('market_data', {})
+        print("Successfully fetched market data from CoinGecko.")
+
+        return {
+            "current_price": market_data.get('current_price', {}).get('usd'),
+            "price_change_24h": market_data.get('price_change_percentage_24h'),
+            "market_cap": market_data.get('market_cap', {}).get('usd'),
+            "total_volume": market_data.get('total_volume', {}).get('usd'),
+            "circulating_supply": market_data.get('circulating_supply'),
+            "ath": market_data.get('ath', {}).get('usd')
         }
-        .glassmorphism {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        .toggle-checkbox:checked {
-            right: 0;
-            border-color: #8b5cf6; /* purple-500 */
-        }
-        .toggle-checkbox:checked + .toggle-label {
-            background-color: #8b5cf6; /* purple-500 */
-        }
-    </style>
-</head>
-<body class="bg-gray-900 text-gray-200 min-h-screen flex items-center justify-center py-8">
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in /shib-prices endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process SHIB prices: {e}")
 
-    <div class="container mx-auto p-4 max-w-7xl">
+@app.get("/shib-historical-data")
+async def get_shib_historical_data():
+    print("Received request for /shib-historical-data")
+    chart_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=30"
+    
+    try:
+        data = await fetch_coingecko_data(chart_url)
+        print("Successfully fetched historical data from CoinGecko.")
+        return {"prices": data.get('prices', [])}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in /shib-historical-data endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process historical data: {e}")
 
-        <!-- Header -->
-        <header class="flex flex-col sm:flex-row justify-between items-center mb-6 pb-4 border-b border-gray-700">
-            <div class="flex items-center space-x-3 mb-4 sm:mb-0">
-                <img src="https://placehold.co/50x50/e3a81f/ffffff?text=SHIB" alt="SHIB Logo" class="rounded-full">
-                <h1 class="text-3xl font-bold text-white">Shiba Inu (SHIB) Trading Analysis</h1>
-            </div>
-            <div id="live-price-section" class="text-right">
-                <p id="current-price" class="text-3xl font-bold text-green-400">$Loading...</p>
-                <p id="price-change-24h" class="text-sm text-green-400">Loading...</p>
-            </div>
-        </header>
+@app.post("/ai-suggest-profit")
+async def ai_suggest_profit(request_body: dict):
+    print("Received request for /ai-suggest-profit")
+    historical_prices = request_body.get("historical_prices", [])
+    current_price = request_body.get("current_price")
 
-        <main class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    if not historical_prices or current_price is None:
+        raise HTTPException(status_code=400, detail="Missing historical_prices or current_price in request body.")
 
-            <!-- Left Column: Signal Log & Performance -->
-            <div class="space-y-6">
-                <!-- Signal Log & Performance -->
-                <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
-                    <h2 class="text-xl font-semibold mb-4">Latest Signal & Trade Plan</h2>
-                    <div id="signal-output" class="glassmorphism p-6 rounded-lg text-center">
-                        <p class="text-gray-400">No signal generated. Adjust parameters and run analysis.</p>
-                    </div>
-                    <button id="check-outcome-btn" class="mt-4 w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105" disabled>
-                        Check Last Signal Outcome
-                    </button>
-                </div>
+    prompt = f"Given the following recent daily closing prices for Shiba Inu (SHIB) in USD: [{', '.join(map(str, historical_prices))}]. The current price is {current_price}. Based on this data, what would be a reasonable and conservative target profit percentage (e.g., 1.5, 2.0, 3.5) for a short-term trade? Provide only the number, no text or percentage sign."
+    
+    chat_history = [{"role": "user", "parts": [{"text": prompt}]}]
+    payload = {"contents": chat_history}
+    
+    gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
-                <!-- Accuracy Metrics -->
-                <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
-                    <h2 class="text-xl font-semibold mb-4">Application Accuracy</h2>
-                    <div class="space-y-3 text-sm">
-                        <div class="flex justify-between"><span>Total Trades:</span> <span id="total-trades" class="font-medium">0</span></div>
-                        <div class="flex justify-between"><span>Wins:</span> <span id="total-wins" class="font-medium text-green-400">0</span></div>
-                        <div class="flex justify-between"><span>Losses:</span> <span id="total-losses" class="font-medium text-red-400">0</span></div>
-                        <div class="flex justify-between"><span>Win Rate:</span> <span id="win-rate" class="font-medium">N/A</span></div>
-                    </div>
-                </div>
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(gemini_api_url, json=payload, timeout=30.0)
+            response.raise_for_status()
+            result = response.json()
+        print("Successfully called Gemini API.")
 
-                <!-- Daily Prices Section (relocated and adapted for SHIB current price) -->
-                <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-full border border-gray-700">
-                    <h2 class="text-2xl font-bold text-white mb-6 text-center">
-                        Daily Entry & Exit Prices
-                    </h2>
+        if result.get('candidates') and result['candidates'][0].get('content') and \
+           result['candidates'][0]['content'].get('parts') and result['candidates'][0]['content']['parts'][0].get('text'):
+            ai_suggestion_text = result['candidates'][0]['content']['parts'][0]['text']
+            suggested_profit = float(ai_suggestion_text.strip())
+            return {"suggested_profit": suggested_profit}
+        else:
+            print(f"Gemini API did not return a valid suggestion structure: {result}")
+            raise HTTPException(status_code=500, detail="AI did not return a valid suggestion.")
+    except ValueError:
+        print(f"AI returned non-numeric suggestion: {ai_suggestion_text}")
+        raise HTTPException(status_code=500, detail="AI returned a non-numeric suggestion.")
+    except httpx.HTTPStatusError as e:
+        print(f"HTTP Error calling Gemini API: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Gemini API error: {e.response.text}")
+    except httpx.RequestError as e:
+        print(f"Network Error calling Gemini API: {e}")
+        raise HTTPException(status_code=500, detail=f"Network error calling Gemini API: {e}")
+    except Exception as e:
+        print(f"Unexpected Error during AI suggestion: {e}")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI suggestion: {e}")
 
-                    <div id="price-display" class="space-y-4">
-                        <div class="bg-gray-700 p-4 rounded-lg flex justify-between items-center shadow-md">
-                            <span class="text-gray-300 text-lg">Entry Price (Current):</span>
-                            <span id="entry-price" class="text-green-400 text-2xl font-semibold">
-                                Loading...
-                            </span>
-                        </div>
-                        <div class="bg-gray-700 p-4 rounded-lg flex justify-between items-center shadow-md">
-                            <span class="text-gray-300 text-lg">Exit Price (Current):</span>
-                            <span id="exit-price" class="text-red-400 text-2xl font-semibold">
-                                Loading...
-                            </span>
-                        </div>
-                        <p class="text-sm text-gray-400 text-center mt-6">
-                            Note: Daily open/close prices are not consistently available for SHIB from CoinGecko.
-                            Entry and Exit prices are currently showing the **latest available price**.
-                        </p>
-                    </div>
+# New endpoint to save a simulated trade to the database
+@app.post("/save-trade")
+async def save_trade(trade_data: dict):
+    print("Received request for /save-trade")
+    if not db_pool:
+        raise HTTPException(status_code=500, detail="Database connection not established.")
 
-                    <div id="error-message" class="text-center text-red-500 text-lg mt-4 hidden">
-                        Failed to load data. Please try again later.
-                    </div>
-                </div>
-            </div>
+    # Ensure numeric values are converted to float for database storage
+    try:
+        trade_data['entryPrice'] = float(trade_data.get('entryPrice'))
+        trade_data['takeProfitPrice'] = float(trade_data.get('takeProfitPrice'))
+        trade_data['stopLossPrice'] = float(trade_data.get('stopLossPrice'))
+        trade_data['positionSize'] = float(trade_data.get('positionSize'))
+        trade_data['profitLoss'] = float(trade_data.get('profitLoss')) if trade_data.get('profitLoss') is not None else None
+        trade_data['outcomePrice'] = float(trade_data.get('outcomePrice')) if trade_data.get('outcomePrice') is not None else None
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid numeric data in trade: {e}")
 
-            <!-- Right Column: Configuration and Market Stats -->
-            <div class="space-y-6">
-                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
-                    <h2 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-3">Strategy Configuration</h2>
+    async with db_pool.acquire() as conn:
+        try:
+            await conn.execute('''
+                INSERT INTO simulated_trades (id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, outcome_price, profit_loss, timestamp)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (id) DO UPDATE SET
+                    signal_type = EXCLUDED.signal_type,
+                    entry_price = EXCLUDED.entry_price,
+                    take_profit_price = EXCLUDED.take_profit_price,
+                    stop_loss_price = EXCLUDED.stop_loss_price,
+                    position_size = EXCLUDED.position_size,
+                    status = EXCLUDED.status,
+                    outcome_price = EXCLUDED.outcome_price,
+                    profit_loss = EXCLUDED.profit_loss,
+                    timestamp = EXCLUDED.timestamp;
+            ''',
+            trade_data['id'], trade_data['signalType'], trade_data['entryPrice'],
+            trade_data['takeProfitPrice'], trade_data['stopLossPrice'], trade_data['positionSize'],
+            trade_data['status'], trade_data['outcomePrice'], trade_data['profitLoss'],
+            trade_data['timestamp']
+            )
+            print(f"Trade {trade_data['id']} saved/updated in DB.")
+            return {"message": "Trade saved successfully"}
+        except Exception as e:
+            print(f"ERROR: Could not save trade to database: {e}")
+            raise HTTPException(status_code=500, detail=f"Database error saving trade: {e}")
 
-                    <!-- Strategy Selector -->
-                    <div class="mb-4">
-                        <label for="strategy-select" class="block text-sm font-medium text-gray-400 mb-2">Trading Strategy</label>
-                        <select id="strategy-select" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:ring-purple-500 focus:border-purple-500">
-                            <option value="volatility">Volatility Mean-Reversion</option>
-                            <option value="trend">Trend-Following Confirmation</option>
-                        </select>
-                    </div>
+# New endpoint to load all simulated trades from the database
+@app.get("/get-all-trades")
+async def get_all_trades():
+    print("Received request for /get-all-trades")
+    if not db_pool:
+        raise HTTPException(status_code=500, detail="Database connection not established.")
 
-                    <!-- User Inputs -->
-                    <div class="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                            <label for="target-profit" class="block text-sm font-medium text-gray-400 mb-2">Target Profit (%)</label>
-                            <input type="number" id="target-profit" value="5" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white">
-                            <button id="suggest-profit-btn" class="mt-2 w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1 px-2 rounded-md transition duration-300 ease-in-out">
-                                Suggest Profit % (AI)
-                            </button>
-                        </div>
-                        <div>
-                            <label for="risk-reward" class="block text-sm font-medium text-gray-400 mb-2">Risk:Reward</label>
-                            <select id="risk-reward" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white">
-                                <option value="2">1:2</option>
-                                <option value="3" selected>1:3</option>
-                                <option value="4">1:4</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="account-size" class="block text-sm font-medium text-gray-400 mb-2">Account Size ($)</label>
-                            <input type="number" id="account-size" value="10000" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white">
-                        </div>
-                        <div>
-                            <label for="max-risk" class="block text-sm font-medium text-gray-400 mb-2">Max Risk / Trade (%)</label>
-                            <input type="number" id="max-risk" value="1" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white">
-                        </div>
-                    </div>
-                    
-                    <!-- Sentiment Filter -->
-                    <div class="flex items-center justify-between mb-6 p-3 bg-gray-700 rounded-lg">
-                        <label for="sentiment-filter" class="text-sm font-medium text-gray-300">Enable Social Sentiment Filter</label>
-                        <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-                            <input type="checkbox" name="sentiment-filter" id="sentiment-filter" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" checked/>
-                            <label for="sentiment-filter" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-600 cursor-pointer"></label>
-                        </div>
-                    </div>
-
-                    <!-- Action Button -->
-                    <button id="run-analysis" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105">
-                        Find Next Trade
-                    </button>
-                </div>
-
-                <!-- Market Stats -->
-                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
-                    <h3 class="text-lg font-semibold mb-4 border-b border-gray-700 pb-2">Market Statistics</h3>
-                    <div class="space-y-3 text-sm">
-                        <div class="flex justify-between"><span>Market Cap:</span> <span id="market-cap" class="font-medium">Loading...</span></div>
-                        <div class="flex justify-between"><span>24h Volume:</span> <span id="volume-24h" class="font-medium">Loading...</span></div>
-                        <div class="flex justify-between"><span>Circulating Supply:</span> <span id="circulating-supply" class="font-medium">Loading...</span></div>
-                        <div class="flex justify-between"><span>All-Time High:</span> <span id="ath" class="font-medium">Loading...</span></div>
-                    </div>
-                </div>
-            </div>
-        </main>
-    </div>
-
-    <script>
-        window.onload = function() {
-            // --- Configuration: Set your backend URL here ---
-            // IMPORTANT: YOU MUST REPLACE 'YOUR_BACKEND_URL_HERE' with the actual URL of your Render backend service.
-            // Example: const BACKEND_BASE_URL = 'https://my-shib-backend.onrender.com';
-            const BACKEND_BASE_URL = 'https://shib-trading-app.onrender.com';
-            // --- DOM Element Selection ---
-            const runAnalysisBtn = document.getElementById('run-analysis');
-            const suggestProfitBtn = document.getElementById('suggest-profit-btn');
-            const checkOutcomeBtn = document.getElementById('check-outcome-btn');
-            const targetProfitInput = document.getElementById('target-profit');
-            const signalOutput = document.getElementById('signal-output');
-            const entryPriceElem = document.getElementById('entry-price');
-            const exitPriceElem = document.getElementById('exit-price');
-            const currentPriceElem = document.getElementById('current-price');
-            const priceChange24hElem = document.getElementById('price-change-24h');
-            const marketCapElem = document.getElementById('market-cap');
-            const volume24hElem = document.getElementById('volume-24h');
-            const circulatingSupplyElem = document.getElementById('circulating-supply');
-            const athElem = document.getElementById('ath');
-            const errorMessageElem = document.getElementById('error-message');
-
-            // Accuracy Metrics Elements
-            const totalTradesElem = document.getElementById('total-trades');
-            const totalWinsElem = document.getElementById('total-wins');
-            const totalLossesElem = document.getElementById('total-losses');
-            const winRateElem = document.getElementById('win-rate');
-
-            // --- Global State for Simulated Trades (resets on page refresh) ---
-            let simulatedTrades = [];
-            let lastGeneratedTrade = null; // To keep track of the most recent signal for outcome check
-
-            // --- Utility Functions ---
-            const formatCurrency = (value) => {
-                if (value === null || isNaN(value)) return 'N/A';
-                return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}`;
-            };
-
-            const formatPercentage = (value) => {
-                if (value === null || isNaN(value)) return 'N/A';
-                const sign = value >= 0 ? '+' : '';
-                return `${sign}${value.toFixed(2)}%`;
-            };
-
-            const formatLargeNumber = (num) => {
-                if (num === null || isNaN(num)) return 'N/A';
-                if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
-                if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
-                if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
-                if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`;
-                return `$${num.toFixed(2)}`;
-            };
-
-            // --- Data Fetching Functions (now call backend) ---
-            const fetchShibPrices = async () => {
-                try {
-                    // Call backend endpoint for SHIB prices
-                    const response = await fetch(`${BACKEND_BASE_URL}/shib-prices`);
-                    if (!response.ok) {
-                        throw new Error(`Backend API error! status: ${response.status}`);
-                    }
-                    const data = await response.json(); // Backend will return parsed JSON
-
-                    if (data) {
-                        const currentPrice = data.current_price;
-                        const priceChange24h = data.price_change_24h;
-                        const marketCap = data.market_cap;
-                        const totalVolume = data.total_volume;
-                        const circulatingSupply = data.circulating_supply;
-                        const ath = data.ath;
-
-                        entryPriceElem.textContent = formatCurrency(currentPrice);
-                        exitPriceElem.textContent = formatCurrency(currentPrice);
-
-                        currentPriceElem.textContent = formatCurrency(currentPrice);
-                        priceChange24hElem.textContent = formatPercentage(priceChange24h);
-                        priceChange24hElem.className = `text-sm ${priceChange24h >= 0 ? 'text-green-400' : 'text-red-400'}`;
-
-                        marketCapElem.textContent = formatLargeNumber(marketCap);
-                        volume24hElem.textContent = formatLargeNumber(totalVolume);
-                        circulatingSupplyElem.textContent = `${circulatingSupply ? circulatingSupply.toLocaleString(undefined, { maximumFractionDigits: 0 }) : 'N/A'} SHIB`;
-                        athElem.textContent = formatCurrency(ath);
-                    } else {
-                        entryPriceElem.textContent = 'N/A';
-                        exitPriceElem.textContent = 'N/A';
-                        currentPriceElem.textContent = 'N/A';
-                        priceChange24hElem.textContent = 'N/A';
-                        marketCapElem.textContent = 'N/A';
-                        volume24hElem.textContent = 'N/A';
-                        circulatingSupplyElem.textContent = 'N/A';
-                        athElem.textContent = 'N/A';
-                        console.warn("No market data available for SHIB from backend.");
-                    }
-
-                    errorMessageElem.classList.add('hidden');
-                } catch (error) {
-                    console.error("Error fetching SHIB data from backend:", error);
-                    errorMessageElem.classList.remove('hidden');
-                    errorMessageElem.textContent = `Failed to load current data from backend: ${error.message}. Please check backend status.`;
-                    entryPriceElem.textContent = 'Error';
-                    exitPriceElem.textContent = 'Error';
-                    currentPriceElem.textContent = 'Error';
-                    priceChange24hElem.textContent = 'Error';
-                    marketCapElem.textContent = 'Error';
-                    volume24hElem.textContent = 'Error';
-                    circulatingSupplyElem.textContent = 'Error';
-                    athElem.textContent = 'Error';
-                }
-            };
-
-            const fetchHistoricalDataForAI = async () => {
-                try {
-                    // Call backend endpoint for historical data
-                    const response = await fetch(`${BACKEND_BASE_URL}/shib-historical-data`);
-                    if (!response.ok) {
-                        throw new Error(`Backend historical data API error! status: ${response.status}`);
-                    }
-                    const data = await response.json(); // Backend will return parsed JSON
-
-                    if (data && data.prices) {
-                        return data.prices;
-                    } else {
-                        console.warn("No historical data available for SHIB from backend for AI analysis.");
-                        return [];
-                    }
-                } catch (error) {
-                    console.error("Error fetching historical SHIB data from backend for AI:", error);
-                    return [];
-                }
-            };
-
-            // --- Accuracy Tracking Functions ---
-            const updateAccuracyMetrics = () => {
-                const total = simulatedTrades.length;
-                const wins = simulatedTrades.filter(trade => trade.status === 'win').length;
-                const losses = simulatedTrades.filter(trade => trade.status === 'loss').length;
-                const winRate = total > 0 ? ((wins / total) * 100).toFixed(2) + '%' : 'N/A';
-
-                totalTradesElem.textContent = total;
-                totalWinsElem.textContent = wins;
-                totalLossesElem.textContent = losses;
-                winRateElem.textContent = winRate;
-            };
-
-            // --- Event Listeners ---
-
-            runAnalysisBtn.addEventListener('click', () => {
-                const targetProfit = parseFloat(document.getElementById('target-profit').value);
-                const riskRewardRatio = parseFloat(document.getElementById('risk-reward').value);
-                const accountSize = parseFloat(document.getElementById('account-size').value);
-                const maxRiskPercent = parseFloat(document.getElementById('max-risk').value);
-                const strategy = document.getElementById('strategy-select').value;
-                const sentimentFilter = document.getElementById('sentiment-filter').checked;
-
-                const currentPriceText = currentPriceElem.textContent.replace('$', '').replace(/,/g, '');
-                const entryPrice = parseFloat(currentPriceText);
-
-                if (isNaN(entryPrice) || entryPrice <= 0) {
-                    signalOutput.innerHTML = `<p class="text-red-400">Cannot run analysis: Current price not available.</p>`;
-                    return;
-                }
-
-                const signalType = Math.random() > 0.5 ? 'LONG' : 'SHORT';
-                
-                let takeProfitPrice, stopLossPrice;
-                const profitPerUnit = entryPrice * (targetProfit / 100);
-
-                if (signalType === 'LONG') {
-                    takeProfitPrice = entryPrice + profitPerUnit;
-                    const riskPerUnit = profitPerUnit / riskRewardRatio;
-                    stopLossPrice = entryPrice - riskPerUnit;
-                } else { // SHORT
-                    takeProfitPrice = entryPrice - profitPerUnit;
-                    const riskPerUnit = profitPerUnit / riskRewardRatio;
-                    stopLossPrice = entryPrice + riskPerUnit;
-                }
-
-                const dollarRiskPerTrade = accountSize * (maxRiskPercent / 100);
-                const riskPerUnitAbsolute = Math.abs(entryPrice - stopLossPrice);
-                const positionSize = riskPerUnitAbsolute > 0.00000001 ? dollarRiskPerTrade / riskPerUnitAbsolute : 0;
-
-                // Display the signal
-                displaySignal(signalType, strategy, entryPrice, takeProfitPrice, stopLossPrice, positionSize, sentimentFilter);
-
-                // Record the simulated trade - IMPORTANT: positionSize is now included here
-                const newTrade = {
-                    id: Date.now(),
-                    signalType,
-                    entryPrice,
-                    takeProfitPrice,
-                    stopLossPrice,
-                    positionSize, // <--- ADDED THIS LINE
-                    status: 'pending',
-                    outcomePrice: null,
-                    profitLoss: null,
-                    timestamp: Date.now() // Record the time the signal was generated
-                };
-                simulatedTrades.push(newTrade);
-                lastGeneratedTrade = newTrade; // Set the last generated trade
-
-                checkOutcomeBtn.disabled = false; // Enable the check outcome button
-                updateAccuracyMetrics(); // Update accuracy display immediately
-            });
-
-            suggestProfitBtn.addEventListener('click', async () => {
-                suggestProfitBtn.textContent = 'Analyzing...';
-                suggestProfitBtn.disabled = true;
-                signalOutput.innerHTML = `<p class="text-blue-400">AI is analyzing market data for profit suggestion...</p>`;
-
-                const historicalPrices = await fetchHistoricalDataForAI(); // This now calls your backend
-
-                if (historicalPrices.length === 0) {
-                    signalOutput.innerHTML = `<p class="text-red-400">Could not fetch historical data for AI analysis from backend. Please try again.</p>`;
-                    suggestProfitBtn.textContent = 'Suggest Profit % (AI)';
-                    suggestProfitBtn.disabled = false;
-                    return;
-                }
-
-                const recentPrices = historicalPrices.slice(-30).map(item => item[1]);
-                const currentPrice = recentPrices[recentPrices.length - 1];
-
-                // Send the historical data to your backend for AI processing
-                try {
-                    const response = await fetch(`${BACKEND_BASE_URL}/ai-suggest-profit`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ historical_prices: recentPrices, current_price: currentPrice })
-                    });
-                    if (!response.ok) {
-                        throw new Error(`Backend AI suggestion API error! status: ${response.status}`);
-                    }
-                    const result = await response.json(); // Backend will return parsed JSON
-
-                    const suggestedProfit = result.suggested_profit;
-
-                    if (!isNaN(suggestedProfit) && suggestedProfit > 0) {
-                        targetProfitInput.value = suggestedProfit.toFixed(2);
-                        signalOutput.innerHTML = `<p class="text-green-400">AI suggested a target profit of ${suggestedProfit.toFixed(2)}%.</p>`;
-                    } else {
-                        signalOutput.innerHTML = `<p class="text-orange-400">AI provided an unreadable suggestion from backend. Using default 5%.</p>`;
-                        targetProfitInput.value = 5;
-                    }
-                } catch (error) {
-                    console.error("Error calling backend for AI suggestion:", error);
-                    signalOutput.innerHTML = `<p class="text-red-400">Error during AI analysis from backend: ${error.message}. Using default 5%.</p>`;
-                    targetProfitInput.value = 5;
-                } finally {
-                    suggestProfitBtn.textContent = 'Suggest Profit % (AI)';
-                    suggestProfitBtn.disabled = false;
-                }
-            });
-
-            checkOutcomeBtn.addEventListener('click', async () => {
-                if (!lastGeneratedTrade || lastGeneratedTrade.status !== 'pending') {
-                    signalOutput.innerHTML = `<p class="text-orange-400">No pending trade to check outcome for.</p>`;
-                    return;
-                }
-
-                checkOutcomeBtn.textContent = 'Checking...';
-                checkOutcomeBtn.disabled = true;
-                signalOutput.innerHTML = `<p class="text-blue-400">Checking outcome for the last signal...</p>`;
-
-                try {
-                    // Call backend endpoint to check outcome
-                    const response = await fetch(`${BACKEND_BASE_URL}/check-signal-outcome`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            entryPrice: lastGeneratedTrade.entryPrice,
-                            takeProfitPrice: lastGeneratedTrade.takeProfitPrice,
-                            stopLossPrice: lastGeneratedTrade.stopLossPrice,
-                            positionSize: lastGeneratedTrade.positionSize,
-                            signalType: lastGeneratedTrade.signalType,
-                            timestamp: lastGeneratedTrade.timestamp
-                        })
-                    });
-                    if (!response.ok) {
-                        throw new Error(`Backend outcome check API error! status: ${response.status}`);
-                    }
-                    const outcomeResult = await response.json();
-
-                    lastGeneratedTrade.status = outcomeResult.status;
-                    lastGeneratedTrade.outcomePrice = outcomeResult.outcomePrice;
-                    lastGeneratedTrade.profitLoss = outcomeResult.profitLoss;
-
-                    let outcomeMessage = '';
-                    if (outcomeResult.status === 'win') {
-                        outcomeMessage = `<p class="text-green-400 text-lg font-bold">Last Signal: WIN! (+${formatCurrency(Math.abs(outcomeResult.profitLoss))})</p>`;
-                    } else if (outcomeResult.status === 'loss') {
-                        outcomeMessage = `<p class="text-red-400 text-lg font-bold">Last Signal: LOSS! (${formatCurrency(outcomeResult.profitLoss)})</p>`;
-                    } else {
-                        outcomeMessage = `<p class="text-orange-400 text-lg font-bold">Last Signal: Still Pending/Neutral. Current price: ${formatCurrency(outcomeResult.outcomePrice)}</p>`;
-                    }
-                    signalOutput.innerHTML += `<div class="mt-4">${outcomeMessage}</div>`;
-
-                } catch (error) {
-                    console.error("Error checking signal outcome from backend:", error);
-                    signalOutput.innerHTML = `<p class="text-red-400">Error checking signal outcome from backend: ${error.message}. Please try again later.</p>`;
-                } finally {
-                    checkOutcomeBtn.textContent = 'Check Last Signal Outcome';
-                    checkOutcomeBtn.disabled = false;
-                    updateAccuracyMetrics(); // Update accuracy display after checking outcome
-                }
-            });
-
-            // --- UI Update Functions ---
-            function displaySignal(type, strategyName, entry, tp, sl, size, sentiment) {
-                const typeColor = type === 'LONG' ? 'bg-green-500' : 'bg-red-500';
-                const sentimentText = sentiment ? `<div class="text-xs text-purple-300 mt-2">(Sentiment Filter Active)</div>` : '';
-                
-                signalOutput.innerHTML = `
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-                        <div>
-                            <div class="flex items-center space-x-3 mb-3">
-                               <span class="w-4 h-4 rounded-full ${typeColor}"></span>
-                               <h3 class="text-2xl font-bold">${type} SIGNAL</h3>
-                            </div>
-                            <p class="text-sm text-gray-400">Strategy: <span class="font-medium text-white capitalize">${strategyName.replace('-', ' ')}</span></p>
-                            ${sentimentText}
-                        </div>
-                        <div class="space-y-2 text-sm">
-                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Entry Price:</span> <span class="font-bold">${formatCurrency(entry)}</span></div>
-                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Take Profit:</span> <span class="font-bold text-green-400">${formatCurrency(tp)}</span></div>
-                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Stop Loss:</span> <span class="font-bold text-red-400">${formatCurrency(sl)}</span></div>
-                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Position Size:</span> <span class="font-bold">${size.toFixed(2)} SHIB</span></div>
-                        </div>
-                    </div>
-                `;
-            }
+    async with db_pool.acquire() as conn:
+        try:
+            records = await conn.fetch('''
+                SELECT id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, outcome_price, profit_loss, timestamp
+                FROM simulated_trades ORDER BY timestamp DESC;
+            ''')
             
-            // --- Initial Data Load ---
-            fetchShibPrices(); // Fetch current price and market stats
-            updateAccuracyMetrics(); // Initialize accuracy display
+            trades = []
+            for record in records:
+                trade = {
+                    "id": record['id'],
+                    "signalType": record['signal_type'],
+                    "entryPrice": float(record['entry_price']), # Convert Decimal to float
+                    "takeProfitPrice": float(record['take_profit_price']),
+                    "stopLossPrice": float(record['stop_loss_price']),
+                    "positionSize": float(record['position_size']),
+                    "status": record['status'],
+                    "outcomePrice": float(record['outcome_price']) if record['outcome_price'] is not None else None,
+                    "profitLoss": float(record['profit_loss']) if record['profit_loss'] is not None else None,
+                    "timestamp": record['timestamp']
+                }
+                trades.append(trade)
+            print(f"Loaded {len(trades)} trades from DB.")
+            return {"trades": trades}
+        except Exception as e:
+            print(f"ERROR: Could not fetch trades from database: {e}")
+            raise HTTPException(status_code=500, detail=f"Database error fetching trades: {e}")
 
-            // Refresh data every 60 seconds
-            setInterval(fetchShibPrices, 60000);
-        };
-    </script>
-</body>
-</html>
+# 4. Endpoint to check signal outcome (now updates DB)
+@app.post("/check-signal-outcome")
+async def check_signal_outcome(trade_details: dict):
+    print("Received request for /check-signal-outcome")
+    entry_price = trade_details.get("entryPrice")
+    take_profit_price = trade_details.get("takeProfitPrice")
+    stop_loss_price = trade_details.get("stopLossPrice")
+    position_size = trade_details.get("positionSize")
+    signal_type = trade_details.get("signalType")
+    timestamp = trade_details.get("timestamp")
+    trade_id = trade_details.get("id") # Get the ID of the trade to update
+
+    if None in [entry_price, take_profit_price, stop_loss_price, position_size, signal_type, timestamp, trade_id]:
+        raise HTTPException(status_code=400, detail="Missing trade details in request body.")
+
+    try:
+        from_timestamp_s = timestamp / 1000
+        to_timestamp_s = from_timestamp_s + (2 * 24 * 60 * 60)
+        
+        chart_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart/range?vs_currency=usd&from={from_timestamp_s}&to={to_timestamp_s}"
+        
+        data = await fetch_coingecko_data(chart_url)
+        prices = data.get('prices', [])
+        print(f"Fetched {len(prices)} historical prices for outcome check.")
+
+        if not prices or len(prices) < 2:
+            # Update DB status to pending if not enough data
+            if db_pool:
+                async with db_pool.acquire() as conn:
+                    await conn.execute("UPDATE simulated_trades SET status = $1 WHERE id = $2;", "pending", trade_id)
+            return {
+                "status": "pending",
+                "outcomePrice": entry_price,
+                "profitLoss": 0,
+                "message": "Not enough historical data to determine outcome within the timeframe."
+            }
+
+        outcome = 'pending'
+        final_price = entry_price
+        profit_loss = 0
+
+        for price_data in prices:
+            price = price_data[1]
+            final_price = price
+
+            if signal_type == 'LONG':
+                if price >= take_profit_price:
+                    outcome = 'win'; break
+                if price <= stop_loss_price:
+                    outcome = 'loss'; break
+            else: # SHORT
+                if price <= take_profit_price:
+                    outcome = 'win'; break
+                if price >= stop_loss_price:
+                    outcome = 'loss'; break
+        
+        # Update the trade in the database
+        if db_pool:
+            async with db_pool.acquire() as conn:
+                await conn.execute('''
+                    UPDATE simulated_trades
+                    SET status = $1, outcome_price = $2, profit_loss = $3
+                    WHERE id = $4;
+                ''', outcome, final_price, profit_loss, trade_id)
+            print(f"Trade {trade_id} outcome updated in DB: {outcome}")
+
+        return {
+            "status": outcome,
+            "outcomePrice": final_price,
+            "profitLoss": profit_loss,
+            "message": f"Signal outcome: {outcome}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in /check-signal-outcome endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to check signal outcome: {e}")
+
 
