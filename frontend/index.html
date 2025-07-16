@@ -171,9 +171,9 @@
     <script>
         window.onload = function() {
             // --- Configuration: Set your backend URL here ---
-            // IMPORTANT: YOU MUST REPLACE 'YOUR_BACKEND_URL_HERE' with the actual URL of your Render backend service.
-            // Example: const BACKEND_BASE_URL = 'https://my-shib-backend.onrender.com';
-          const BACKEND_BASE_URL = 'https://shib-trading-app.onrender.com';
+            // IMPORTANT: This URL is now hardcoded as per your request for future updates.
+            const BACKEND_BASE_URL = 'https://shib-trading-app.onrender.com'; 
+
             // --- DOM Element Selection ---
             const runAnalysisBtn = document.getElementById('run-analysis');
             const suggestProfitBtn = document.getElementById('suggest-profit-btn');
@@ -372,7 +372,7 @@
                     return;
                 }
 
-                let aiSignalType, aiReasoning;
+                let aiSignalType, aiReasoning, aiSentimentScore; // Added aiSentimentScore
 
                 try {
                     const response = await fetch(`${BACKEND_BASE_URL}/ai-trade-signal`, {
@@ -382,7 +382,8 @@
                             current_price: currentPrice,
                             price_change_24h: priceChange24h,
                             historical_prices: historicalPrices.map(item => item[1]), // Send only prices
-                            strategy_name: strategy // Pass selected strategy name
+                            strategy_name: strategy, // Pass selected strategy name
+                            sentiment_filter_enabled: sentimentFilter // Pass sentiment filter status
                         })
                     });
                     if (!response.ok) {
@@ -391,6 +392,7 @@
                     const aiResult = await response.json();
                     aiSignalType = aiResult.signal_type;
                     aiReasoning = aiResult.reasoning;
+                    aiSentimentScore = aiResult.sentiment_score; // Get sentiment score from AI result
 
                 } catch (error) {
                     console.error("Error calling backend for AI trade signal:", error);
@@ -402,7 +404,7 @@
 
                 // If AI suggests NEUTRAL, display message and don't proceed with trade
                 if (aiSignalType === 'NEUTRAL') {
-                    displaySignal('NEUTRAL', strategy, currentPrice, null, null, 0, sentimentFilter, aiReasoning);
+                    displaySignal('NEUTRAL', strategy, currentPrice, null, null, 0, sentimentFilter, aiReasoning, aiSentimentScore);
                     signalOutput.innerHTML += `<div class="mt-4 text-orange-400">AI suggests: No clear trade opportunity.</div>`;
                     runAnalysisBtn.textContent = 'Find Next Trade';
                     runAnalysisBtn.disabled = false;
@@ -427,7 +429,7 @@
                 const positionSize = riskPerUnitAbsolute > 0.00000001 ? dollarRiskPerTrade / riskPerUnitAbsolute : 0;
 
                 // Display the signal
-                displaySignal(aiSignalType, strategy, currentPrice, takeProfitPrice, stopLossPrice, positionSize, sentimentFilter, aiReasoning);
+                displaySignal(aiSignalType, strategy, currentPrice, takeProfitPrice, stopLossPrice, positionSize, sentimentFilter, aiReasoning, aiSentimentScore);
 
                 // Record the simulated trade
                 const newTrade = {
@@ -441,7 +443,8 @@
                     outcomePrice: null,
                     profitLoss: null,
                     timestamp: Date.now(),
-                    aiReasoning: aiReasoning // Store AI's reasoning
+                    aiReasoning: aiReasoning, // Store AI's reasoning
+                    sentimentScore: aiSentimentScore // Store sentiment score
                 };
                 
                 // Send trade to backend to save
@@ -574,7 +577,7 @@
             });
 
             // --- UI Update Functions ---
-            function displaySignal(type, strategyName, entry, tp, sl, size, sentiment, reasoning) {
+            function displaySignal(type, strategyName, entry, tp, sl, size, sentiment, reasoning, sentimentScore) {
                 const typeColor = type === 'LONG' ? 'bg-green-500' : (type === 'SHORT' ? 'bg-red-500' : 'bg-gray-500');
                 const sentimentText = sentiment ? `<div class="text-xs text-purple-300 mt-2">(Sentiment Filter Active)</div>` : '';
                 const tradeDetails = (type === 'NEUTRAL') ? '' : `
@@ -586,6 +589,9 @@
                     </div>
                 `;
                 const reasoningDisplay = reasoning ? `<p class="text-sm text-gray-400 mt-3">AI Reason: <span class="font-medium text-white">${reasoning}</span></p>` : '';
+                const sentimentScoreDisplay = (sentimentScore !== null && sentimentScore !== undefined) ? 
+                    `<p class="text-sm text-gray-400 mt-1">BTC Sentiment: <span class="font-medium text-white">${sentimentScore.toFixed(4)}</span></p>` : '';
+
 
                 signalOutput.innerHTML = `
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
@@ -596,6 +602,7 @@
                             </div>
                             <p class="text-sm text-gray-400">Strategy: <span class="font-medium text-white capitalize">${strategyName.replace('-', ' ')}</span></p>
                             ${sentimentText}
+                            ${sentimentScoreDisplay}
                             ${reasoningDisplay}
                         </div>
                         ${tradeDetails}
