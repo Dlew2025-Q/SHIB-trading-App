@@ -13,10 +13,12 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://shib-trading-app-front-end.onrender.com"], # Explicitly allow your frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+)
 )
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
