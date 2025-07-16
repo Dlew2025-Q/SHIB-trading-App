@@ -41,6 +41,8 @@ async def connect_to_db():
         await create_trades_table() # Ensure table exists and has correct schema on startup
     except Exception as e:
         print(f"ERROR: Could not connect to database: {e}")
+        # If DB connection fails, ensure app doesn't crash but operates without DB
+        db_pool = None # Set pool to None so endpoints can check this
 
 async def disconnect_from_db():
     global db_pool
@@ -441,7 +443,7 @@ async def check_signal_outcome(trade_details: dict):
 
     try:
         from_timestamp_s = timestamp / 1000
-        to_timestamp_s = from_timestamp_s + (2 * 24 * 60 * 60)
+        to_timestamp_s = from_timestamp_s + (2 * 24 * 60 * 60);
         
         chart_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart/range?vs_currency=usd&from={from_timestamp_s}&to={to_timestamp_s}"
         
