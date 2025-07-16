@@ -173,7 +173,7 @@
             // --- Configuration: Set your backend URL here ---
             // IMPORTANT: YOU MUST REPLACE 'YOUR_BACKEND_URL_HERE' with the actual URL of your Render backend service.
             // Example: const BACKEND_BASE_URL = 'https://my-shib-backend.onrender.com';
-            const BACKEND_BASE_URL = 'https://shib-trading-app.onrender.com';
+            const BACKEND_BASE_URL = 'YOUR_BACKEND_URL_HERE'; 
 
             // --- DOM Element Selection ---
             const runAnalysisBtn = document.getElementById('run-analysis');
@@ -339,7 +339,12 @@
 
             // --- Event Listeners ---
 
-            runAnalysisBtn.addEventListener('click', async () => { // Made async to await save_trade
+            runAnalysisBtn.addEventListener('click', async () => {
+                // Disable button and show loading
+                runAnalysisBtn.textContent = 'Analyzing...';
+                runAnalysisBtn.disabled = true;
+                signalOutput.innerHTML = `<p class="text-blue-400">AI is analyzing market for trade signal...</p>`;
+
                 const targetProfit = parseFloat(document.getElementById('target-profit').value);
                 const riskRewardRatio = parseFloat(document.getElementById('risk-reward').value);
                 const accountSize = parseFloat(document.getElementById('account-size').value);
@@ -348,47 +353,96 @@
                 const sentimentFilter = document.getElementById('sentiment-filter').checked;
 
                 const currentPriceText = currentPriceElem.textContent.replace('$', '').replace(/,/g, '');
-                const entryPrice = parseFloat(currentPriceText);
+                const currentPrice = parseFloat(currentPriceText);
+                const priceChange24hText = priceChange24hElem.textContent.replace('%', '');
+                const priceChange24h = parseFloat(priceChange24hText);
 
-                if (isNaN(entryPrice) || entryPrice <= 0) {
+                if (isNaN(currentPrice) || currentPrice <= 0) {
                     signalOutput.innerHTML = `<p class="text-red-400">Cannot run analysis: Current price not available.</p>`;
+                    runAnalysisBtn.textContent = 'Find Next Trade';
+                    runAnalysisBtn.disabled = false;
                     return;
                 }
 
-                const signalType = Math.random() > 0.5 ? 'LONG' : 'SHORT';
+                const historicalPrices = await fetchHistoricalDataForAI();
+
+                if (historicalPrices.length === 0) {
+                    signalOutput.innerHTML = `<p class="text-red-400">Could not fetch historical data for AI analysis. Please try again.</p>`;
+                    runAnalysisBtn.textContent = 'Find Next Trade';
+                    runAnalysisBtn.disabled = false;
+                    return;
+                }
+
+                let aiSignalType, aiReasoning;
+
+                try {
+                    const response = await fetch(`${BACKEND_BASE_URL}/ai-trade-signal`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            current_price: currentPrice,
+                            price_change_24h: priceChange24h,
+                            historical_prices: historicalPrices.map(item => item[1]), // Send only prices
+                            strategy_name: strategy // Pass selected strategy name
+                        })
+                    });
+                    if (!response.ok) {
+                        throw new Error(`Backend AI signal API error! status: ${response.status}`);
+                    }
+                    const aiResult = await response.json();
+                    aiSignalType = aiResult.signal_type;
+                    aiReasoning = aiResult.reasoning;
+
+                } catch (error) {
+                    console.error("Error calling backend for AI trade signal:", error);
+                    signalOutput.innerHTML = `<p class="text-red-400">Error during AI signal generation: ${error.message}.</p>`;
+                    runAnalysisBtn.textContent = 'Find Next Trade';
+                    runAnalysisBtn.disabled = false;
+                    return;
+                }
+
+                // If AI suggests NEUTRAL, display message and don't proceed with trade
+                if (aiSignalType === 'NEUTRAL') {
+                    displaySignal('NEUTRAL', strategy, currentPrice, null, null, 0, sentimentFilter, aiReasoning);
+                    signalOutput.innerHTML += `<div class="mt-4 text-orange-400">AI suggests: No clear trade opportunity.</div>`;
+                    runAnalysisBtn.textContent = 'Find Next Trade';
+                    runAnalysisBtn.disabled = false;
+                    return;
+                }
                 
                 let takeProfitPrice, stopLossPrice;
-                const profitPerUnit = entryPrice * (targetProfit / 100);
+                const profitPerUnit = currentPrice * (targetProfit / 100);
 
-                if (signalType === 'LONG') {
-                    takeProfitPrice = entryPrice + profitPerUnit;
+                if (aiSignalType === 'LONG') {
+                    takeProfitPrice = currentPrice + profitPerUnit;
                     const riskPerUnit = profitPerUnit / riskRewardRatio;
-                    stopLossPrice = entryPrice - riskPerUnit;
+                    stopLossPrice = currentPrice - riskPerUnit;
                 } else { // SHORT
-                    takeProfitPrice = entryPrice - profitPerUnit;
+                    takeProfitPrice = currentPrice - profitPerUnit;
                     const riskPerUnit = profitPerUnit / riskRewardRatio;
-                    stopLossPrice = entryPrice + riskPerUnit;
+                    stopLossPrice = currentPrice + riskPerUnit;
                 }
 
                 const dollarRiskPerTrade = accountSize * (maxRiskPercent / 100);
-                const riskPerUnitAbsolute = Math.abs(entryPrice - stopLossPrice);
+                const riskPerUnitAbsolute = Math.abs(currentPrice - stopLossPrice);
                 const positionSize = riskPerUnitAbsolute > 0.00000001 ? dollarRiskPerTrade / riskPerUnitAbsolute : 0;
 
                 // Display the signal
-                displaySignal(signalType, strategy, entryPrice, takeProfitPrice, stopLossPrice, positionSize, sentimentFilter);
+                displaySignal(aiSignalType, strategy, currentPrice, takeProfitPrice, stopLossPrice, positionSize, sentimentFilter, aiReasoning);
 
                 // Record the simulated trade
                 const newTrade = {
                     id: Date.now(), // Unique ID for the trade
-                    signalType,
-                    entryPrice,
+                    signalType: aiSignalType,
+                    entryPrice: currentPrice,
                     takeProfitPrice,
                     stopLossPrice,
                     positionSize,
                     status: 'pending', // Initial status
                     outcomePrice: null,
                     profitLoss: null,
-                    timestamp: Date.now()
+                    timestamp: Date.now(),
+                    aiReasoning: aiReasoning // Store AI's reasoning
                 };
                 
                 // Send trade to backend to save
@@ -413,7 +467,9 @@
                 } catch (error) {
                     console.error("Error saving trade to backend:", error);
                     signalOutput.innerHTML = `<p class="text-red-400">Error saving trade: ${error.message}. Trade not recorded.</p>`;
-                    // If saving fails, don't update local state as it won't be persistent
+                } finally {
+                    runAnalysisBtn.textContent = 'Find Next Trade';
+                    runAnalysisBtn.disabled = false;
                 }
             });
 
@@ -475,12 +531,11 @@
                 signalOutput.innerHTML = `<p class="text-blue-400">Checking outcome for the last signal...</p>`;
 
                 try {
-                    // Send all trade details including its ID to the backend
                     const response = await fetch(`${BACKEND_BASE_URL}/check-signal-outcome`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            id: lastGeneratedTrade.id, // Pass the ID
+                            id: lastGeneratedTrade.id,
                             entryPrice: lastGeneratedTrade.entryPrice,
                             takeProfitPrice: lastGeneratedTrade.takeProfitPrice,
                             stopLossPrice: lastGeneratedTrade.stopLossPrice,
@@ -515,16 +570,24 @@
                 } finally {
                     checkOutcomeBtn.textContent = 'Check Last Signal Outcome';
                     checkOutcomeBtn.disabled = false;
-                    // Re-load all trades from DB to ensure local state is consistent with DB
                     await loadAllTrades(); 
                 }
             });
 
             // --- UI Update Functions ---
-            function displaySignal(type, strategyName, entry, tp, sl, size, sentiment) {
-                const typeColor = type === 'LONG' ? 'bg-green-500' : 'bg-red-500';
+            function displaySignal(type, strategyName, entry, tp, sl, size, sentiment, reasoning) {
+                const typeColor = type === 'LONG' ? 'bg-green-500' : (type === 'SHORT' ? 'bg-red-500' : 'bg-gray-500');
                 const sentimentText = sentiment ? `<div class="text-xs text-purple-300 mt-2">(Sentiment Filter Active)</div>` : '';
-                
+                const tradeDetails = (type === 'NEUTRAL') ? '' : `
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Entry Price:</span> <span class="font-bold">${formatCurrency(entry)}</span></div>
+                        <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Take Profit:</span> <span class="font-bold text-green-400">${formatCurrency(tp)}</span></div>
+                        <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Stop Loss:</span> <span class="font-bold text-red-400">${formatCurrency(sl)}</span></div>
+                        <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Position Size:</span> <span class="font-bold">${size.toFixed(2)} SHIB</span></div>
+                    </div>
+                `;
+                const reasoningDisplay = reasoning ? `<p class="text-sm text-gray-400 mt-3">AI Reason: <span class="font-medium text-white">${reasoning}</span></p>` : '';
+
                 signalOutput.innerHTML = `
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
                         <div>
@@ -534,13 +597,9 @@
                             </div>
                             <p class="text-sm text-gray-400">Strategy: <span class="font-medium text-white capitalize">${strategyName.replace('-', ' ')}</span></p>
                             ${sentimentText}
+                            ${reasoningDisplay}
                         </div>
-                        <div class="space-y-2 text-sm">
-                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Entry Price:</span> <span class="font-bold">${formatCurrency(entry)}</span></div>
-                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Take Profit:</span> <span class="font-bold text-green-400">${formatCurrency(tp)}</span></div>
-                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Stop Loss:</span> <span class="font-bold text-red-400">${formatCurrency(sl)}</span></div>
-                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Position Size:</span> <span class="font-bold">${size.toFixed(2)} SHIB</span></div>
-                        </div>
+                        ${tradeDetails}
                     </div>
                 `;
             }
@@ -548,7 +607,6 @@
             // --- Initial Data Load ---
             fetchShibPrices(); // Fetch current price and market stats
             loadAllTrades(); // Load all trades from the database on startup
-            // updateAccuracyMetrics() is called by loadAllTrades and runAnalysisBtn click
 
             // Refresh market data every 60 seconds
             setInterval(fetchShibPrices, 60000);
