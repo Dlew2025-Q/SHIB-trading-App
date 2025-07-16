@@ -7,6 +7,7 @@ import os
 import asyncio
 import asyncpg
 import json
+from datetime import datetime, timedelta
 
 app = FastAPI()
 
@@ -62,12 +63,13 @@ async def create_trades_table():
                 outcome_price NUMERIC(20, 8),
                 profit_loss NUMERIC(20, 8),
                 timestamp BIGINT NOT NULL,
-                ai_reasoning TEXT -- This column might be new
+                ai_reasoning TEXT,
+                sentiment_score NUMERIC(10, 8) -- New column for sentiment score
             );
         ''')
         print("simulated_trades table checked/created.")
 
-        # Check if ai_reasoning column exists and add it if not
+        # Check and add 'ai_reasoning' column if it doesn't exist (for schema migration)
         try:
             await conn.execute("ALTER TABLE simulated_trades ADD COLUMN ai_reasoning TEXT;")
             print("Added 'ai_reasoning' column to 'simulated_trades' table.")
@@ -76,15 +78,15 @@ async def create_trades_table():
         except Exception as e:
             print(f"WARNING: Could not add 'ai_reasoning' column: {e}")
 
+        # Check and add 'sentiment_score' column if it doesn't exist (for schema migration)
+        try:
+            await conn.execute("ALTER TABLE simulated_trades ADD COLUMN sentiment_score NUMERIC(10, 8);")
+            print("Added 'sentiment_score' column to 'simulated_trades' table.")
+        except asyncpg.exceptions.DuplicateColumnError:
+            print("'sentiment_score' column already exists.")
+        except Exception as e:
+            print(f"WARNING: Could not add 'sentiment_score' column: {e}")
 
-# --- FastAPI Lifecycle Events (connect/disconnect DB) ---
-@app.on_event("startup")
-async def startup_event():
-    await connect_to_db()
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    await disconnect_from_db()
 
 # --- Helper function to make CoinGecko API calls ---
 async def fetch_coingecko_data(url: str):
@@ -96,8 +98,8 @@ async def fetch_coingecko_data(url: str):
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers, timeout=10.0) # Add a timeout
-            response.raise_for_status() # This will raise an error for 4xx/5xx responses
+            response = await client.get(url, headers=headers, timeout=10.0)
+            response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
             print(f"HTTP Error fetching CoinGecko data from {url}: {e.response.status_code} - {e.response.text}")
@@ -108,6 +110,36 @@ async def fetch_coingecko_data(url: str):
         except Exception as e:
             print(f"Unexpected Error fetching CoinGecko data from {url}: {e}")
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
+
+# --- NEW: Helper function to fetch sentiment data from SentiCrypt ---
+async def fetch_senticrypt_data():
+    await asyncio.sleep(0.5) # Be polite to API
+    senticrypt_url = "https://api.senticrypt.com/v2/all.json"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(senticrypt_url, timeout=10.0)
+            response.raise_for_status()
+            data = response.json()
+            
+            # SentiCrypt returns data for multiple dates. Find the latest available.
+            # Data is ordered from newest to oldest.
+            if data:
+                # Find the most recent date's sentiment score (mean)
+                # SentiCrypt data is for BTC, not SHIB specifically.
+                latest_sentiment = data[0] # Assuming the first entry is the most recent
+                return latest_sentiment.get('mean')
+            return None
+        except httpx.HTTPStatusError as e:
+            print(f"HTTP Error fetching SentiCrypt data: {e.response.status_code} - {e.response.text}")
+            return None # Return None on error
+        except httpx.RequestError as e:
+            print(f"Network Error fetching SentiCrypt data: {e}")
+            return None # Return None on error
+        except Exception as e:
+            print(f"Unexpected Error fetching SentiCrypt data: {e}")
+            return None # Return None on error
+
 
 # --- Backend Endpoints ---
 
@@ -163,7 +195,7 @@ async def ai_suggest_profit(request_body: dict):
     if not historical_prices or current_price is None:
         raise HTTPException(status_code=400, detail="Missing historical_prices or current_price in request body.")
 
-    prompt = f"Given the following recent daily closing prices for Shiba Inu (SHIB) in USD: [{', '.join(map(str, historical_prices))}]. The current price is {current_price}. Based on this data, what would be a reasonable and conservative target profit percentage (e.g., 1.5, 2.0, 3.5) for a short-term trade? Provide only the number, no text or percentage sign. Only give the number."
+    prompt = f"Given the following recent daily closing prices for Shiba Inu (SHIB) in USD: [{', '.join(map(str, historical_prices))}] and the current price is {current_price}. Based on this data, what would be a reasonable and conservative target profit percentage (e.g., 1.5, 2.0, 3.5) for a short-term trade? Provide only the number, no text or percentage sign. Only give the number."
     
     chat_history = [{"role": "user", "parts": [{"text": prompt}]}]
     payload = {"contents": chat_history}
@@ -191,14 +223,13 @@ async def ai_suggest_profit(request_body: dict):
         if result.get('candidates') and result['candidates'][0].get('content') and \
            result['candidates'][0]['content'].get('parts') and result['candidates'][0]['content']['parts'][0].get('text'):
             ai_suggestion_text = result['candidates'][0]['content']['parts'][0]['text']
-            # Attempt to parse as JSON first, then fallback to float if not JSON
             try:
                 parsed_json = json.loads(ai_suggestion_text)
                 suggested_profit = parsed_json.get("suggested_profit")
             except json.JSONDecodeError:
-                suggested_profit = float(ai_suggestion_text.strip()) # Fallback if AI doesn't return JSON
+                suggested_profit = float(ai_suggestion_text.strip())
             
-            if suggested_profit is not None and not isinstance(suggested_profit, bool) and not isinstance(suggested_profit, str) and not isinstance(suggested_profit, list) and not isinstance(suggested_profit, dict): # Check for valid number
+            if suggested_profit is not None and not isinstance(suggested_profit, bool) and not isinstance(suggested_profit, str) and not isinstance(suggested_profit, list) and not isinstance(suggested_profit, dict):
                 return {"suggested_profit": suggested_profit}
             else:
                 print(f"AI returned invalid profit suggestion format or value: {ai_suggestion_text}")
@@ -219,8 +250,7 @@ async def ai_suggest_profit(request_body: dict):
         print(f"Unexpected Error during AI profit suggestion: {e}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI profit suggestion: {e}")
 
-
-# NEW: Endpoint for AI-driven trade signal
+# Endpoint for AI-driven trade signal
 @app.post("/ai-trade-signal")
 async def ai_trade_signal(request_body: dict):
     print("Received request for /ai-trade-signal")
@@ -228,34 +258,49 @@ async def ai_trade_signal(request_body: dict):
     price_change_24h = request_body.get("price_change_24h")
     historical_prices = request_body.get("historical_prices", [])
     strategy_name = request_body.get("strategy_name")
+    sentiment_filter_enabled = request_body.get("sentiment_filter_enabled", False) # Get sentiment filter status
 
     if current_price is None or not historical_prices:
         raise HTTPException(status_code=400, detail="Missing current_price or historical_prices for AI signal.")
 
-    prompt = f"""Analyze the recent price movements of Shiba Inu (SHIB) based on the following data:
-    - Current Price: ${current_price}
-    - 24-hour Price Change: {price_change_24h:.2f}%
-    - Last 30 daily closing prices (oldest to newest): [{', '.join(map(str, historical_prices))}]
+    # Fetch sentiment data if filter is enabled
+    current_sentiment_score = None
+    if sentiment_filter_enabled:
+        current_sentiment_score = await fetch_senticrypt_data()
+        if current_sentiment_score is None:
+            print("WARNING: Sentiment filter enabled but could not fetch sentiment data. Proceeding without sentiment.")
+        else:
+            print(f"Fetched current sentiment score: {current_sentiment_score}")
 
-    Considering this data, and a general understanding of cryptocurrency market dynamics (e.g., momentum, volatility, potential for mean reversion), provide a trade signal.
+
+    # Construct a detailed prompt for the AI
+    prompt_parts = [
+        f"Analyze the recent price movements of Shiba Inu (SHIB) based on the following data:",
+        f"- Current Price: ${current_price}",
+        f"- 24-hour Price Change: {price_change_24h:.2f}%",
+        f"- Last 30 daily closing prices (oldest to newest): [{', '.join(map(str, historical_prices))}]"
+    ]
+
+    if sentiment_filter_enabled and current_sentiment_score is not None:
+        prompt_parts.append(f"- Current Bitcoin Sentiment Score (from SentiCrypt): {current_sentiment_score} (Note: This is BTC sentiment, use as general market sentiment context).")
     
-    Your response MUST be in the following exact JSON format:
-    {{
-        "signal_type": "LONG" | "SHORT" | "NEUTRAL",
-        "reasoning": "A concise explanation for the signal, focusing on price action and trends."
-    }}
+    prompt_parts.append(f"Considering this data, and a general understanding of cryptocurrency market dynamics (e.g., momentum, volatility, potential for mean reversion), provide a trade signal.")
+    prompt_parts.append(f"Your response MUST be in the following exact JSON format:")
+    prompt_parts.append(f"{{")
+    prompt_parts.append(f"    \"signal_type\": \"LONG\" | \"SHORT\" | \"NEUTRAL\",")
+    prompt_parts.append(f"    \"reasoning\": \"A concise explanation for the signal, focusing on price action, trends, and if applicable, sentiment.\"")
+    prompt_parts.append(f"}}")
+    prompt_parts.append(f"If you recommend \"NEUTRAL\", explain why no clear opportunity is present.")
+    prompt_parts.append(f"Be concise and professional.")
     
-    If you recommend "NEUTRAL", explain why no clear opportunity is present.
-    Be concise and professional.
-    """
-    
+    prompt = "\n".join(prompt_parts)
+
     chat_history = [{"role": "user", "parts": [{"text": prompt}]}]
     payload = {"contents": chat_history}
     
     gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
     try:
-        # Use structured response schema for JSON output
         payload["generationConfig"] = {
             "responseMimeType": "application/json",
             "responseSchema": {
@@ -269,7 +314,7 @@ async def ai_trade_signal(request_body: dict):
         }
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(gemini_api_url, json=payload, timeout=45.0) # Increased timeout for complex AI analysis
+            response = await client.post(gemini_api_url, json=payload, timeout=45.0)
             response.raise_for_status()
             result = response.json()
         print("Successfully called Gemini API for trade signal.")
@@ -277,13 +322,13 @@ async def ai_trade_signal(request_body: dict):
         if result.get('candidates') and result['candidates'][0].get('content') and \
            result['candidates'][0]['content'].get('parts') and result['candidates'][0]['content']['parts'][0].get('text'):
             ai_response_json_str = result['candidates'][0]['content']['parts'][0]['text']
-            ai_response = json.loads(ai_response_json_str) # Parse the JSON string
+            ai_response = json.loads(ai_response_json_str)
 
             signal_type = ai_response.get("signal_type")
             reasoning = ai_response.get("reasoning")
 
             if signal_type in ["LONG", "SHORT", "NEUTRAL"] and reasoning:
-                return {"signal_type": signal_type, "reasoning": reasoning}
+                return {"signal_type": signal_type, "reasoning": reasoning, "sentiment_score": current_sentiment_score}
             else:
                 print(f"AI returned invalid signal format: {ai_response_json_str}")
                 raise HTTPException(status_code=500, detail="AI returned invalid signal format.")
@@ -316,15 +361,16 @@ async def save_trade(trade_data: dict):
         trade_data['positionSize'] = float(trade_data.get('positionSize'))
         trade_data['profitLoss'] = float(trade_data.get('profitLoss')) if trade_data.get('profitLoss') is not None else None
         trade_data['outcomePrice'] = float(trade_data.get('outcomePrice')) if trade_data.get('outcomePrice') is not None else None
-        trade_data['ai_reasoning'] = trade_data.get('aiReasoning', '') # Get new AI reasoning
+        trade_data['ai_reasoning'] = trade_data.get('aiReasoning', '')
+        trade_data['sentiment_score'] = float(trade_data.get('sentimentScore')) if trade_data.get('sentimentScore') is not None else None
     except (ValueError, TypeError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid numeric data in trade: {e}")
 
     async with db_pool.acquire() as conn:
         try:
             await conn.execute('''
-                INSERT INTO simulated_trades (id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, outcome_price, profit_loss, timestamp, ai_reasoning)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                INSERT INTO simulated_trades (id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, outcome_price, profit_loss, timestamp, ai_reasoning, sentiment_score)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 ON CONFLICT (id) DO UPDATE SET
                     signal_type = EXCLUDED.signal_type,
                     entry_price = EXCLUDED.entry_price,
@@ -335,12 +381,13 @@ async def save_trade(trade_data: dict):
                     outcome_price = EXCLUDED.outcome_price,
                     profit_loss = EXCLUDED.profit_loss,
                     timestamp = EXCLUDED.timestamp,
-                    ai_reasoning = EXCLUDED.ai_reasoning;
+                    ai_reasoning = EXCLUDED.ai_reasoning,
+                    sentiment_score = EXCLUDED.sentiment_score;
             ''',
             trade_data['id'], trade_data['signalType'], trade_data['entryPrice'],
             trade_data['takeProfitPrice'], trade_data['stopLossPrice'], trade_data['positionSize'],
             trade_data['status'], trade_data['outcomePrice'], trade_data['profitLoss'],
-            trade_data['timestamp'], trade_data['ai_reasoning']
+            trade_data['timestamp'], trade_data['ai_reasoning'], trade_data['sentiment_score']
             )
             print(f"Trade {trade_data['id']} saved/updated in DB.")
             return {"message": "Trade saved successfully"}
@@ -357,7 +404,7 @@ async def get_all_trades():
     async with db_pool.acquire() as conn:
         try:
             records = await conn.fetch('''
-                SELECT id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, outcome_price, profit_loss, timestamp, ai_reasoning
+                SELECT id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, outcome_price, profit_loss, timestamp, ai_reasoning, sentiment_score
                 FROM simulated_trades ORDER BY timestamp DESC;
             ''')
             
@@ -374,7 +421,8 @@ async def get_all_trades():
                     "outcomePrice": float(record['outcome_price']) if record['outcome_price'] is not None else None,
                     "profitLoss": float(record['profit_loss']) if record['profit_loss'] is not None else None,
                     "timestamp": record['timestamp'],
-                    "aiReasoning": record['ai_reasoning']
+                    "aiReasoning": record['ai_reasoning'],
+                    "sentimentScore": float(record['sentiment_score']) if record['sentiment_score'] is not None else None
                 }
                 trades.append(trade)
             print(f"Loaded {len(trades)} trades from DB.")
