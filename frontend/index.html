@@ -7,13 +7,504 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /* ... (rest of the CSS) ... */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .glassmorphism {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #8b5cf6; /* purple-500 */
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #8b5cf6; /* purple-500 */
+        }
     </style>
 </head>
-<body>
-    <!-- ... (rest of the HTML content) ... -->
+<body class="bg-gray-900 text-gray-200 min-h-screen flex items-center justify-center py-8">
+
+    <div class="container mx-auto p-4 max-w-7xl">
+
+        <!-- Header -->
+        <header class="flex flex-col sm:flex-row justify-between items-center mb-6 pb-4 border-b border-gray-700">
+            <div class="flex items-center space-x-3 mb-4 sm:mb-0">
+                <img src="https://placehold.co/50x50/e3a81f/ffffff?text=SHIB" alt="SHIB Logo" class="rounded-full">
+                <h1 class="text-3xl font-bold text-white">Shiba Inu (SHIB) Trading Analysis</h1>
+            </div>
+            <div id="live-price-section" class="text-right">
+                <p id="current-price" class="text-3xl font-bold text-green-400">$Loading...</p>
+                <p id="price-change-24h" class="text-sm text-green-400">Loading...</p>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            <!-- Left Column: Signal Log & Performance -->
+            <div class="space-y-6">
+                <!-- Signal Log & Performance -->
+                <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
+                    <h2 class="text-xl font-semibold mb-4">Latest Signal & Trade Plan</h2>
+                    <div id="signal-output" class="glassmorphism p-6 rounded-lg text-center">
+                        <p class="text-gray-400">No signal generated. Adjust parameters and run analysis.</p>
+                    </div>
+                    <button id="check-outcome-btn" class="mt-4 w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105" disabled>
+                        Check Last Signal Outcome
+                    </button>
+                </div>
+
+                <!-- Accuracy Metrics -->
+                <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
+                    <h2 class="text-xl font-semibold mb-4">Application Accuracy</h2>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex justify-between"><span>Total Trades:</span> <span id="total-trades" class="font-medium">0</span></div>
+                        <div class="flex justify-between"><span>Wins:</span> <span id="total-wins" class="font-medium text-green-400">0</span></div>
+                        <div class="flex justify-between"><span>Losses:</span> <span id="total-losses" class="font-medium text-red-400">0</span></div>
+                        <div class="flex justify-between"><span>Win Rate:</span> <span id="win-rate" class="font-medium">N/A</span></div>
+                    </div>
+                </div>
+
+                <!-- Daily Prices Section (relocated and adapted for SHIB current price) -->
+                <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-full border border-gray-700">
+                    <h2 class="text-2xl font-bold text-white mb-6 text-center">
+                        Daily Entry & Exit Prices
+                    </h2>
+
+                    <div id="price-display" class="space-y-4">
+                        <div class="bg-gray-700 p-4 rounded-lg flex justify-between items-center shadow-md">
+                            <span class="text-gray-300 text-lg">Entry Price (Current):</span>
+                            <span id="entry-price" class="text-green-400 text-2xl font-semibold">
+                                Loading...
+                            </span>
+                        </div>
+                        <div class="bg-gray-700 p-4 rounded-lg flex justify-between items-center shadow-md">
+                            <span class="text-gray-300 text-lg">Exit Price (Current):</span>
+                            <span id="exit-price" class="text-red-400 text-2xl font-semibold">
+                                Loading...
+                            </span>
+                        </div>
+                        <p class="text-sm text-gray-400 text-center mt-6">
+                            Note: Daily open/close prices are not consistently available for SHIB from CoinGecko.
+                            Entry and Exit prices are currently showing the **latest available price**.
+                        </p>
+                    </div>
+
+                    <div id="error-message" class="text-center text-red-500 text-lg mt-4 hidden">
+                        Failed to load data. Please try again later.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Configuration and Market Stats -->
+            <div class="space-y-6">
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl font-semibold mb-4 border-b border-gray-700 pb-3">Strategy Configuration</h2>
+
+                    <!-- Strategy Selector -->
+                    <div class="mb-4">
+                        <label for="strategy-select" class="block text-sm font-medium text-gray-400 mb-2">Trading Strategy</label>
+                        <select id="strategy-select" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:ring-purple-500 focus:border-purple-500">
+                            <option value="volatility">Volatility Mean-Reversion</option>
+                            <option value="trend">Trend-Following Confirmation</option>
+                        </select>
+                    </div>
+
+                    <!-- User Inputs -->
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label for="target-profit" class="block text-sm font-medium text-gray-400 mb-2">Target Profit (%)</label>
+                            <input type="number" id="target-profit" value="5" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white">
+                            <button id="suggest-profit-btn" class="mt-2 w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1 px-2 rounded-md transition duration-300 ease-in-out">
+                                Suggest Profit % (AI)
+                            </button>
+                        </div>
+                        <div>
+                            <label for="risk-reward" class="block text-sm font-medium text-gray-400 mb-2">Risk:Reward</label>
+                            <select id="risk-reward" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white">
+                                <option value="2">1:2</option>
+                                <option value="3" selected>1:3</option>
+                                <option value="4">1:4</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="account-size" class="block text-sm font-medium text-gray-400 mb-2">Account Size ($)</label>
+                            <input type="number" id="account-size" value="10000" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white">
+                        </div>
+                        <div>
+                            <label for="max-risk" class="block text-sm font-medium text-gray-400 mb-2">Max Risk / Trade (%)</label>
+                            <input type="number" id="max-risk" value="1" class="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white">
+                        </div>
+                    </div>
+                    
+                    <!-- Sentiment Filter -->
+                    <div class="flex items-center justify-between mb-6 p-3 bg-gray-700 rounded-lg">
+                        <label for="sentiment-filter" class="text-sm font-medium text-gray-300">Enable Social Sentiment Filter</label>
+                        <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" name="sentiment-filter" id="sentiment-filter" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" checked/>
+                            <label for="sentiment-filter" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-600 cursor-pointer"></label>
+                        </div>
+                    </div>
+
+                    <!-- Action Button -->
+                    <button id="run-analysis" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105">
+                        Find Next Trade
+                    </button>
+                </div>
+
+                <!-- Market Stats -->
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h3 class="text-lg font-semibold mb-4 border-b border-gray-700 pb-2">Market Statistics</h3>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex justify-between"><span>Market Cap:</span> <span id="market-cap" class="font-medium">Loading...</span></div>
+                        <div class="flex justify-between"><span>24h Volume:</span> <span id="volume-24h" class="font-medium">Loading...</span></div>
+                        <div class="flex justify-between"><span>Circulating Supply:</span> <span id="circulating-supply" class="font-medium">Loading...</span></div>
+                        <div class="flex justify-between"><span>All-Time High:</span> <span id="ath" class="font-medium">Loading...</span></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
     <script>
-        // ... (JavaScript code) ...
+        window.onload = function() {
+            // --- Configuration: Set your backend URL here ---
+            // IMPORTANT: Replace 'YOUR_BACKEND_URL_HERE' with the actual URL of your Render backend service
+            // Example: const BACKEND_BASE_URL = 'https://my-shib-backend.onrender.com';
+            const BACKEND_BASE_URL = 'YOUR_BACKEND_URL_HERE'; 
+
+            // --- DOM Element Selection ---
+            const runAnalysisBtn = document.getElementById('run-analysis');
+            const suggestProfitBtn = document.getElementById('suggest-profit-btn');
+            const checkOutcomeBtn = document.getElementById('check-outcome-btn');
+            const targetProfitInput = document.getElementById('target-profit');
+            const signalOutput = document.getElementById('signal-output');
+            const entryPriceElem = document.getElementById('entry-price');
+            const exitPriceElem = document.getElementById('exit-price');
+            const currentPriceElem = document.getElementById('current-price');
+            const priceChange24hElem = document.getElementById('price-change-24h');
+            const marketCapElem = document.getElementById('market-cap');
+            const volume24hElem = document.getElementById('volume-24h');
+            const circulatingSupplyElem = document.getElementById('circulating-supply');
+            const athElem = document.getElementById('ath');
+            const errorMessageElem = document.getElementById('error-message');
+
+            // Accuracy Metrics Elements
+            const totalTradesElem = document.getElementById('total-trades');
+            const totalWinsElem = document.getElementById('total-wins');
+            const totalLossesElem = document.getElementById('total-losses');
+            const winRateElem = document.getElementById('win-rate');
+
+            // --- Global State for Simulated Trades (resets on page refresh) ---
+            let simulatedTrades = [];
+            let lastGeneratedTrade = null; // To keep track of the most recent signal for outcome check
+
+            // --- Utility Functions ---
+            const formatCurrency = (value) => {
+                if (value === null || isNaN(value)) return 'N/A';
+                return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}`;
+            };
+
+            const formatPercentage = (value) => {
+                if (value === null || isNaN(value)) return 'N/A';
+                const sign = value >= 0 ? '+' : '';
+                return `${sign}${value.toFixed(2)}%`;
+            };
+
+            const formatLargeNumber = (num) => {
+                if (num === null || isNaN(num)) return 'N/A';
+                if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
+                if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
+                if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
+                if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`;
+                return `$${num.toFixed(2)}`;
+            };
+
+            // --- Data Fetching Functions (now call backend) ---
+            const fetchShibPrices = async () => {
+                try {
+                    // Call backend endpoint for SHIB prices
+                    const response = await fetch(`${BACKEND_BASE_URL}/shib-prices`);
+                    if (!response.ok) {
+                        throw new Error(`Backend API error! status: ${response.status}`);
+                    }
+                    const data = await response.json(); // Backend will return parsed JSON
+
+                    if (data) {
+                        const currentPrice = data.current_price;
+                        const priceChange24h = data.price_change_24h;
+                        const marketCap = data.market_cap;
+                        const totalVolume = data.total_volume;
+                        const circulatingSupply = data.circulating_supply;
+                        const ath = data.ath;
+
+                        entryPriceElem.textContent = formatCurrency(currentPrice);
+                        exitPriceElem.textContent = formatCurrency(currentPrice);
+
+                        currentPriceElem.textContent = formatCurrency(currentPrice);
+                        priceChange24hElem.textContent = formatPercentage(priceChange24h);
+                        priceChange24hElem.className = `text-sm ${priceChange24h >= 0 ? 'text-green-400' : 'text-red-400'}`;
+
+                        marketCapElem.textContent = formatLargeNumber(marketCap);
+                        volume24hElem.textContent = formatLargeNumber(totalVolume);
+                        circulatingSupplyElem.textContent = `${circulatingSupply ? circulatingSupply.toLocaleString(undefined, { maximumFractionDigits: 0 }) : 'N/A'} SHIB`;
+                        athElem.textContent = formatCurrency(ath);
+                    } else {
+                        entryPriceElem.textContent = 'N/A';
+                        exitPriceElem.textContent = 'N/A';
+                        currentPriceElem.textContent = 'N/A';
+                        priceChange24hElem.textContent = 'N/A';
+                        marketCapElem.textContent = 'N/A';
+                        volume24hElem.textContent = 'N/A';
+                        circulatingSupplyElem.textContent = 'N/A';
+                        athElem.textContent = 'N/A';
+                        console.warn("No market data available for SHIB from backend.");
+                    }
+
+                    errorMessageElem.classList.add('hidden');
+                } catch (error) {
+                    console.error("Error fetching SHIB data from backend:", error);
+                    errorMessageElem.classList.remove('hidden');
+                    errorMessageElem.textContent = `Failed to load current data from backend: ${error.message}. Please check backend status.`;
+                    entryPriceElem.textContent = 'Error';
+                    exitPriceElem.textContent = 'Error';
+                    currentPriceElem.textContent = 'Error';
+                    priceChange24hElem.textContent = 'Error';
+                    marketCapElem.textContent = 'Error';
+                    volume24hElem.textContent = 'Error';
+                    circulatingSupplyElem.textContent = 'Error';
+                    athElem.textContent = 'Error';
+                }
+            };
+
+            const fetchHistoricalDataForAI = async () => {
+                try {
+                    // Call backend endpoint for historical data
+                    const response = await fetch(`${BACKEND_BASE_URL}/shib-historical-data`);
+                    if (!response.ok) {
+                        throw new Error(`Backend historical data API error! status: ${response.status}`);
+                    }
+                    const data = await response.json(); // Backend will return parsed JSON
+
+                    if (data && data.prices) {
+                        return data.prices;
+                    } else {
+                        console.warn("No historical data available for SHIB from backend for AI analysis.");
+                        return [];
+                    }
+                } catch (error) {
+                    console.error("Error fetching historical SHIB data from backend for AI:", error);
+                    return [];
+                }
+            };
+
+            // --- Accuracy Tracking Functions ---
+            const updateAccuracyMetrics = () => {
+                const total = simulatedTrades.length;
+                const wins = simulatedTrades.filter(trade => trade.status === 'win').length;
+                const losses = simulatedTrades.filter(trade => trade.status === 'loss').length;
+                const winRate = total > 0 ? ((wins / total) * 100).toFixed(2) + '%' : 'N/A';
+
+                totalTradesElem.textContent = total;
+                totalWinsElem.textContent = wins;
+                totalLossesElem.textContent = losses;
+                winRateElem.textContent = winRate;
+            };
+
+            // --- Event Listeners ---
+
+            runAnalysisBtn.addEventListener('click', () => {
+                const targetProfit = parseFloat(document.getElementById('target-profit').value);
+                const riskRewardRatio = parseFloat(document.getElementById('risk-reward').value);
+                const accountSize = parseFloat(document.getElementById('account-size').value);
+                const maxRiskPercent = parseFloat(document.getElementById('max-risk').value);
+                const strategy = document.getElementById('strategy-select').value;
+                const sentimentFilter = document.getElementById('sentiment-filter').checked;
+
+                const currentPriceText = currentPriceElem.textContent.replace('$', '').replace(/,/g, '');
+                const entryPrice = parseFloat(currentPriceText);
+
+                if (isNaN(entryPrice) || entryPrice <= 0) {
+                    signalOutput.innerHTML = `<p class="text-red-400">Cannot run analysis: Current price not available.</p>`;
+                    return;
+                }
+
+                const signalType = Math.random() > 0.5 ? 'LONG' : 'SHORT';
+                
+                let takeProfitPrice, stopLossPrice;
+                const profitPerUnit = entryPrice * (targetProfit / 100);
+
+                if (signalType === 'LONG') {
+                    takeProfitPrice = entryPrice + profitPerUnit;
+                    const riskPerUnit = profitPerUnit / riskRewardRatio;
+                    stopLossPrice = entryPrice - riskPerUnit;
+                } else { // SHORT
+                    takeProfitPrice = entryPrice - profitPerUnit;
+                    const riskPerUnit = profitPerUnit / riskRewardRatio;
+                    stopLossPrice = entryPrice + riskPerUnit;
+                }
+
+                const dollarRiskPerTrade = accountSize * (maxRiskPercent / 100);
+                const riskPerUnitAbsolute = Math.abs(entryPrice - stopLossPrice);
+                const positionSize = riskPerUnitAbsolute > 0.00000001 ? dollarRiskPerTrade / riskPerUnitAbsolute : 0;
+
+                // Display the signal
+                displaySignal(signalType, strategy, entryPrice, takeProfitPrice, stopLossPrice, positionSize, sentimentFilter);
+
+                // Record the simulated trade
+                const newTrade = {
+                    id: Date.now(),
+                    signalType,
+                    entryPrice,
+                    takeProfitPrice,
+                    stopLossPrice,
+                    status: 'pending',
+                    outcomePrice: null,
+                    profitLoss: null,
+                    timestamp: Date.now() // Record the time the signal was generated
+                };
+                simulatedTrades.push(newTrade);
+                lastGeneratedTrade = newTrade; // Set the last generated trade
+
+                checkOutcomeBtn.disabled = false; // Enable the check outcome button
+                updateAccuracyMetrics(); // Update accuracy display immediately
+            });
+
+            suggestProfitBtn.addEventListener('click', async () => {
+                suggestProfitBtn.textContent = 'Analyzing...';
+                suggestProfitBtn.disabled = true;
+                signalOutput.innerHTML = `<p class="text-blue-400">AI is analyzing market data for profit suggestion...</p>`;
+
+                const historicalPrices = await fetchHistoricalDataForAI(); // This now calls your backend
+
+                if (historicalPrices.length === 0) {
+                    signalOutput.innerHTML = `<p class="text-red-400">Could not fetch historical data for AI analysis from backend. Please try again.</p>`;
+                    suggestProfitBtn.textContent = 'Suggest Profit % (AI)';
+                    suggestProfitBtn.disabled = false;
+                    return;
+                }
+
+                const recentPrices = historicalPrices.slice(-30).map(item => item[1]);
+                const currentPrice = recentPrices[recentPrices.length - 1];
+
+                // Send the historical data to your backend for AI processing
+                try {
+                    const response = await fetch(`${BACKEND_BASE_URL}/ai-suggest-profit`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ historical_prices: recentPrices, current_price: currentPrice })
+                    });
+                    if (!response.ok) {
+                        throw new Error(`Backend AI suggestion API error! status: ${response.status}`);
+                    }
+                    const result = await response.json(); // Backend will return parsed JSON
+
+                    const suggestedProfit = result.suggested_profit;
+
+                    if (!isNaN(suggestedProfit) && suggestedProfit > 0) {
+                        targetProfitInput.value = suggestedProfit.toFixed(2);
+                        signalOutput.innerHTML = `<p class="text-green-400">AI suggested a target profit of ${suggestedProfit.toFixed(2)}%.</p>`;
+                    } else {
+                        signalOutput.innerHTML = `<p class="text-orange-400">AI provided an unreadable suggestion from backend. Using default 5%.</p>`;
+                        targetProfitInput.value = 5;
+                    }
+                } catch (error) {
+                    console.error("Error calling backend for AI suggestion:", error);
+                    signalOutput.innerHTML = `<p class="text-red-400">Error during AI analysis from backend: ${error.message}. Using default 5%.</p>`;
+                    targetProfitInput.value = 5;
+                } finally {
+                    suggestProfitBtn.textContent = 'Suggest Profit % (AI)';
+                    suggestProfitBtn.disabled = false;
+                }
+            });
+
+            checkOutcomeBtn.addEventListener('click', async () => {
+                if (!lastGeneratedTrade || lastGeneratedTrade.status !== 'pending') {
+                    signalOutput.innerHTML = `<p class="text-orange-400">No pending trade to check outcome for.</p>`;
+                    return;
+                }
+
+                checkOutcomeBtn.textContent = 'Checking...';
+                checkOutcomeBtn.disabled = true;
+                signalOutput.innerHTML = `<p class="text-blue-400">Checking outcome for the last signal...</p>`;
+
+                try {
+                    // Call backend endpoint to check outcome
+                    const response = await fetch(`${BACKEND_BASE_URL}/check-signal-outcome`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            entryPrice: lastGeneratedTrade.entryPrice,
+                            takeProfitPrice: lastGeneratedTrade.takeProfitPrice,
+                            stopLossPrice: lastGeneratedTrade.stopLossPrice,
+                            positionSize: lastGeneratedTrade.positionSize,
+                            signalType: lastGeneratedTrade.signalType,
+                            timestamp: lastGeneratedTrade.timestamp
+                        })
+                    });
+                    if (!response.ok) {
+                        throw new Error(`Backend outcome check API error! status: ${response.status}`);
+                    }
+                    const outcomeResult = await response.json();
+
+                    lastGeneratedTrade.status = outcomeResult.status;
+                    lastGeneratedTrade.outcomePrice = outcomeResult.outcomePrice;
+                    lastGeneratedTrade.profitLoss = outcomeResult.profitLoss;
+
+                    let outcomeMessage = '';
+                    if (outcomeResult.status === 'win') {
+                        outcomeMessage = `<p class="text-green-400 text-lg font-bold">Last Signal: WIN! (+${formatCurrency(Math.abs(outcomeResult.profitLoss))})</p>`;
+                    } else if (outcomeResult.status === 'loss') {
+                        outcomeMessage = `<p class="text-red-400 text-lg font-bold">Last Signal: LOSS! (${formatCurrency(outcomeResult.profitLoss)})</p>`;
+                    } else {
+                        outcomeMessage = `<p class="text-orange-400 text-lg font-bold">Last Signal: Still Pending/Neutral. Current price: ${formatCurrency(outcomeResult.outcomePrice)}</p>`;
+                    }
+                    signalOutput.innerHTML += `<div class="mt-4">${outcomeMessage}</div>`;
+
+                } catch (error) {
+                    console.error("Error checking signal outcome from backend:", error);
+                    signalOutput.innerHTML = `<p class="text-red-400">Error checking signal outcome from backend: ${error.message}. Please try again later.</p>`;
+                } finally {
+                    checkOutcomeBtn.textContent = 'Check Last Signal Outcome';
+                    checkOutcomeBtn.disabled = false;
+                    updateAccuracyMetrics(); // Update accuracy display after checking outcome
+                }
+            });
+
+            // --- UI Update Functions ---
+            function displaySignal(type, strategyName, entry, tp, sl, size, sentiment) {
+                const typeColor = type === 'LONG' ? 'bg-green-500' : 'bg-red-500';
+                const sentimentText = sentiment ? `<div class="text-xs text-purple-300 mt-2">(Sentiment Filter Active)</div>` : '';
+                
+                signalOutput.innerHTML = `
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+                        <div>
+                            <div class="flex items-center space-x-3 mb-3">
+                               <span class="w-4 h-4 rounded-full ${typeColor}"></span>
+                               <h3 class="text-2xl font-bold">${type} SIGNAL</h3>
+                            </div>
+                            <p class="text-sm text-gray-400">Strategy: <span class="font-medium text-white capitalize">${strategyName.replace('-', ' ')}</span></p>
+                            ${sentimentText}
+                        </div>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Entry Price:</span> <span class="font-bold">${formatCurrency(entry)}</span></div>
+                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Take Profit:</span> <span class="font-bold text-green-400">${formatCurrency(tp)}</span></div>
+                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Stop Loss:</span> <span class="font-bold text-red-400">${formatCurrency(sl)}</span></div>
+                            <div class="flex justify-between p-2 rounded-md bg-gray-900/50"><span>Position Size:</span> <span class="font-bold">${size.toFixed(2)} SHIB</span></div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // --- Initial Data Load ---
+            fetchShibPrices(); // Fetch current price and market stats
+            updateAccuracyMetrics(); // Initialize accuracy display
+
+            // Refresh data every 60 seconds
+            setInterval(fetchShibPrices, 60000);
+        };
     </script>
 </body>
 </html>
