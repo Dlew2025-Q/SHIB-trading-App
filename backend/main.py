@@ -6,7 +6,7 @@ import httpx
 import os
 import asyncio
 import asyncpg
-import json # Already imported, but good to note its use for potential future complex data
+import json
 
 app = FastAPI()
 
@@ -37,7 +37,7 @@ async def connect_to_db():
     try:
         db_pool = await asyncpg.create_pool(DATABASE_URL)
         print("Successfully connected to PostgreSQL database.")
-        await create_trades_table() # Ensure table exists on startup
+        await create_trades_table() # Ensure table exists and has correct schema on startup
     except Exception as e:
         print(f"ERROR: Could not connect to database: {e}")
 
@@ -49,6 +49,7 @@ async def disconnect_from_db():
 
 async def create_trades_table():
     async with db_pool.acquire() as conn:
+        # Create table if it doesn't exist
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS simulated_trades (
                 id BIGINT PRIMARY KEY,
@@ -61,10 +62,20 @@ async def create_trades_table():
                 outcome_price NUMERIC(20, 8),
                 profit_loss NUMERIC(20, 8),
                 timestamp BIGINT NOT NULL,
-                ai_reasoning TEXT -- New column for AI reasoning
+                ai_reasoning TEXT -- This column might be new
             );
         ''')
         print("simulated_trades table checked/created.")
+
+        # Check if ai_reasoning column exists and add it if not
+        try:
+            await conn.execute("ALTER TABLE simulated_trades ADD COLUMN ai_reasoning TEXT;")
+            print("Added 'ai_reasoning' column to 'simulated_trades' table.")
+        except asyncpg.exceptions.DuplicateColumnError:
+            print("'ai_reasoning' column already exists.")
+        except Exception as e:
+            print(f"WARNING: Could not add 'ai_reasoning' column: {e}")
+
 
 # --- FastAPI Lifecycle Events (connect/disconnect DB) ---
 @app.on_event("startup")
@@ -85,8 +96,8 @@ async def fetch_coingecko_data(url: str):
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers, timeout=10.0)
-            response.raise_for_status()
+            response = await client.get(url, headers=headers, timeout=10.0) # Add a timeout
+            response.raise_for_status() # This will raise an error for 4xx/5xx responses
             return response.json()
         except httpx.HTTPStatusError as e:
             print(f"HTTP Error fetching CoinGecko data from {url}: {e.response.status_code} - {e.response.text}")
@@ -160,6 +171,17 @@ async def ai_suggest_profit(request_body: dict):
     gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
     try:
+        payload["generationConfig"] = {
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "suggested_profit": {"type": "NUMBER"}
+                },
+                "required": ["suggested_profit"]
+            }
+        }
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(gemini_api_url, json=payload, timeout=30.0)
             response.raise_for_status()
@@ -169,13 +191,23 @@ async def ai_suggest_profit(request_body: dict):
         if result.get('candidates') and result['candidates'][0].get('content') and \
            result['candidates'][0]['content'].get('parts') and result['candidates'][0]['content']['parts'][0].get('text'):
             ai_suggestion_text = result['candidates'][0]['content']['parts'][0]['text']
-            suggested_profit = float(ai_suggestion_text.strip())
-            return {"suggested_profit": suggested_profit}
+            # Attempt to parse as JSON first, then fallback to float if not JSON
+            try:
+                parsed_json = json.loads(ai_suggestion_text)
+                suggested_profit = parsed_json.get("suggested_profit")
+            except json.JSONDecodeError:
+                suggested_profit = float(ai_suggestion_text.strip()) # Fallback if AI doesn't return JSON
+            
+            if suggested_profit is not None and not isinstance(suggested_profit, bool) and not isinstance(suggested_profit, str) and not isinstance(suggested_profit, list) and not isinstance(suggested_profit, dict): # Check for valid number
+                return {"suggested_profit": suggested_profit}
+            else:
+                print(f"AI returned invalid profit suggestion format or value: {ai_suggestion_text}")
+                raise HTTPException(status_code=500, detail="AI returned an invalid profit suggestion value.")
         else:
             print(f"Gemini API did not return a valid suggestion structure for profit: {result}")
             raise HTTPException(status_code=500, detail="AI did not return a valid profit suggestion.")
     except ValueError:
-        print(f"AI returned non-numeric suggestion for profit: {ai_suggestion_text}")
+        print(f"AI returned non-numeric suggestion for profit after stripping: {ai_suggestion_text}")
         raise HTTPException(status_code=500, detail="AI returned a non-numeric profit suggestion.")
     except httpx.HTTPStatusError as e:
         print(f"HTTP Error calling Gemini API for profit: {e.response.status_code} - {e.response.text}")
@@ -186,6 +218,7 @@ async def ai_suggest_profit(request_body: dict):
     except Exception as e:
         print(f"Unexpected Error during AI profit suggestion: {e}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI profit suggestion: {e}")
+
 
 # NEW: Endpoint for AI-driven trade signal
 @app.post("/ai-trade-signal")
@@ -199,8 +232,6 @@ async def ai_trade_signal(request_body: dict):
     if current_price is None or not historical_prices:
         raise HTTPException(status_code=400, detail="Missing current_price or historical_prices for AI signal.")
 
-    # Construct a detailed prompt for the AI
-    # Explicitly tell AI the data it has and what to output
     prompt = f"""Analyze the recent price movements of Shiba Inu (SHIB) based on the following data:
     - Current Price: ${current_price}
     - 24-hour Price Change: {price_change_24h:.2f}%
@@ -343,7 +374,7 @@ async def get_all_trades():
                     "outcomePrice": float(record['outcome_price']) if record['outcome_price'] is not None else None,
                     "profitLoss": float(record['profit_loss']) if record['profit_loss'] is not None else None,
                     "timestamp": record['timestamp'],
-                    "aiReasoning": record['ai_reasoning'] # Get new AI reasoning
+                    "aiReasoning": record['ai_reasoning']
                 }
                 trades.append(trade)
             print(f"Loaded {len(trades)} trades from DB.")
