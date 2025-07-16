@@ -23,7 +23,7 @@ COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
 if not COINGECKO_API_KEY:
     print("WARNING: COINGECKO_API_KEY environment variable is not set!")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") # Ensure GEMINI_API_KEY is read from env or defaults to empty string
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip() # Added .strip() to remove whitespace/newlines
 
 db_pool = None
 
