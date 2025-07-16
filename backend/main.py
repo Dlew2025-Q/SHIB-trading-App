@@ -345,3 +345,4 @@ async def check_signal_outcome(trade_details: dict):
     except Exception as e:
         print(f"Error in /check-signal-outcome endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to check signal outcome: {e}")
+
