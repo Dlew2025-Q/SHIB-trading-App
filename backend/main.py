@@ -11,28 +11,25 @@ from datetime import datetime, timedelta
 
 app = FastAPI()
 
+# FIX: Removed the extra closing parenthesis from app.add_middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://shib-trading-app-front-end.onrender.com"], # Explicitly allow your frontend URL
+    allow_origins=["https://shib-trading-app-front-end.onrender.com"], # Use your specific frontend URL here
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
-)
 )
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
 if not COINGECKO_API_KEY:
     print("WARNING: COINGECKO_API_KEY environment variable is not set!")
 
-# Ensure GEMINI_API_KEY is read from env and stripped of any whitespace/newlines
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY environment variable is not set!")
 else:
-    print(f"INFO: GEMINI_API_KEY loaded (starts with: {GEMINI_API_KEY[:5]}...)") # Log first few chars
+    print(f"INFO: GEMINI_API_KEY loaded (starts with: {GEMINI_API_KEY[:5]}...)")
 
-# NEW: RapidAPI Key for Crypto News
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 if not RAPIDAPI_KEY:
     print("WARNING: RAPIDAPI_KEY environment variable is not set! Crypto news will not work.")
@@ -53,7 +50,7 @@ async def connect_to_db():
         print(f"Attempting to connect to database using URL: {DATABASE_URL[:30]}...")
         db_pool = await asyncpg.create_pool(DATABASE_URL, timeout=10)
         print("Successfully connected to PostgreSQL database pool.")
-        await create_trades_table() # Ensure table exists and has correct schema on startup
+        await create_trades_table()
     except Exception as e:
         print(f"CRITICAL ERROR: Could not connect to or initialize database: {e}")
         db_pool = None
@@ -97,7 +94,6 @@ async def create_trades_table():
             print("simulated_trades table checked/created with full schema.")
 
             # Add columns if they don't exist (for existing tables from previous versions)
-            # This is a robust way to handle schema changes for existing deployments
             try:
                 await conn.execute("ALTER TABLE simulated_trades ADD COLUMN IF NOT EXISTS ai_reasoning TEXT;")
                 print("Checked/Added 'ai_reasoning' column to 'simulated_trades' table.")
@@ -597,3 +593,55 @@ async def check_signal_outcome(trade_details: dict):
     except Exception as e:
         print(f"Error in /check-signal-outcome endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to check signal outcome: {e}")
+```
+You're seeing a `403 Forbidden` error from the frontend when trying to access `/ai-trade-signal`, and the backend logs are showing a `500 Internal Server Error` with `HTTP Error calling Gemini API for signal: 403 - ... "Method doesn't allow unregistered callers... Please use API Key..."`.
+
+This is a very clear indication that the **Gemini API key is still not correctly recognized or authorized by Google's Gemini API service, specifically for the `gemini-2.0-flash` model.**
+
+Even though we've tried to strip whitespace, the core issue is that the Gemini API is telling your backend it doesn't have a valid identity (API key) to call it. This usually means:
+
+1.  **The `GEMINI_API_KEY` environment variable on Render is still incorrect.** (Most likely)
+    * A typo in the key itself.
+    * An invisible character (like a newline or non-breaking space) was pasted along with the key into Render's environment variable field.
+    * The key was copied from a place that added extra formatting.
+2.  **The Google Cloud Project associated with that API key doesn't have the "Generative Language API" enabled.**
+3.  **The API key itself might be restricted** to specific IP addresses or HTTP referrers that don't match Render's outgoing IP or your frontend's domain.
+4.  **The API key might be invalid or revoked.**
+
+**Given the `Method doesn't allow unregistered callers` message, the problem is still fundamentally that the Gemini API is not recognizing the API key provided from your Render backend.**
+
+**Here's the most critical step to fix this, very carefully:**
+
+1.  **Go to Google AI Studio and re-copy your Gemini API Key with extreme precision:**
+    * Open `https://aistudio.google.com/`
+    * Log in with your Google account.
+    * On the left sidebar, click **"Get API key"** (or "API access").
+    * **Copy your API key again.** Be incredibly precise: select **_only_ the characters of the key**, from the very first character (`A`) to the very last, **without including any leading/trailing spaces, newlines, or any other invisible characters.** It starts with `AIzaSy...`.
+
+2.  **Re-enter the Gemini API Key in Render, meticulously:**
+    * Go to your Render Dashboard: `https://dashboard.render.com/`
+    * Click on your **backend service** (the one named `SHIB-trading-App`).
+    * Go to the **"Environment"** tab.
+    * Find the `GEMINI_API_KEY` entry.
+    * Click the **"Edit" icon** (pencil) next to it.
+    * In the **"Value"** field:
+        * **Delete the current content entirely.**
+        * **Carefully paste the freshly copied Gemini API key.**
+        * **Triple-check that there are absolutely no extra spaces or newlines** at the beginning or end of the pasted key.
+    * Click **"Save Changes"**.
+
+3.  **Verify Google Cloud Project API Enablement (Crucial for `403`):**
+    * Go to the **Google Cloud Console**: `https://console.cloud.google.com/`
+    * At the top, use the **project selector dropdown** to ensure you are in the **correct Google Cloud Project** associated with your Gemini API key.
+    * In the left navigation, go to **"APIs & Services" > "Library"**.
+    * Search for `Generative Language API`.
+    * Click on it. **Ensure the API is "Enabled."** If it says "Enable," click it.
+    * Also, go to **"APIs & Services" > "Credentials"**. Find your API key and check its "API restrictions." For testing, ensure it's either "Don't restrict key" or explicitly allows "Generative Language API."
+
+**What happens next:**
+
+Render will automatically trigger a **redeploy** of your `SHIB-trading-App` backend service. This will take a few minutes.
+
+Once it's live again, your backend will use this newly entered, clean API key. Then, refresh your frontend app, and try clicking "Find Next Trade" again. This should finally resolve the `403 Forbidden` error from Gemini.
+
+This is a very common issue with API keys copied from web interfaces, and re-entering it perfectly is usually the soluti
