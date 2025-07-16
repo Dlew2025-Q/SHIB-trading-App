@@ -171,10 +171,9 @@
     <script>
         window.onload = function() {
             // --- Configuration: Set your backend URL here ---
-            // IMPORTANT: Replace 'YOUR_BACKEND_URL_HERE' with the actual URL of your Render backend service
+            // IMPORTANT: YOU MUST REPLACE 'YOUR_BACKEND_URL_HERE' with the actual URL of your Render backend service.
             // Example: const BACKEND_BASE_URL = 'https://my-shib-backend.onrender.com';
-          // Example: const BACKEND_BASE_URL = 'https://my-shib-backend.onrender.com';
-const BACKEND_BASE_URL = 'https://shib-trading-app.onrender.com'; // Use your actual URL here!
+            const BACKEND_BASE_URL = 'YOUR_BACKEND_URL_HERE'; 
 
             // --- DOM Element Selection ---
             const runAnalysisBtn = document.getElementById('run-analysis');
@@ -354,13 +353,14 @@ const BACKEND_BASE_URL = 'https://shib-trading-app.onrender.com'; // Use your ac
                 // Display the signal
                 displaySignal(signalType, strategy, entryPrice, takeProfitPrice, stopLossPrice, positionSize, sentimentFilter);
 
-                // Record the simulated trade
+                // Record the simulated trade - IMPORTANT: positionSize is now included here
                 const newTrade = {
                     id: Date.now(),
                     signalType,
                     entryPrice,
                     takeProfitPrice,
                     stopLossPrice,
+                    positionSize, // <--- ADDED THIS LINE
                     status: 'pending',
                     outcomePrice: null,
                     profitLoss: null,
