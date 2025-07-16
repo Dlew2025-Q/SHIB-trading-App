@@ -23,9 +23,12 @@ COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
 if not COINGECKO_API_KEY:
     print("WARNING: COINGECKO_API_KEY environment variable is not set!")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Ensure GEMINI_API_KEY is read from env and stripped of any whitespace/newlines
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY environment variable is not set!")
+else:
+    print(f"INFO: GEMINI_API_KEY loaded (starts with: {GEMINI_API_KEY[:5]}...)") # Log first few chars
 
 # NEW: RapidAPI Key for Crypto News
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
@@ -48,7 +51,7 @@ async def connect_to_db():
         print(f"Attempting to connect to database using URL: {DATABASE_URL[:30]}...")
         db_pool = await asyncpg.create_pool(DATABASE_URL, timeout=10)
         print("Successfully connected to PostgreSQL database pool.")
-        await create_trades_table()
+        await create_trades_table() # Ensure table exists and has correct schema on startup
     except Exception as e:
         print(f"CRITICAL ERROR: Could not connect to or initialize database: {e}")
         db_pool = None
@@ -67,13 +70,12 @@ async def create_trades_table():
 
     async with db_pool.acquire() as conn:
         try:
-            # TEMPORARY: Drop table to ensure clean schema for testing
-            # WARNING: This will delete all existing data in 'simulated_trades' table!
-            # REMOVE THIS LINE AFTER INITIAL SETUP IS CONFIRMED WORKING
-            # await conn.execute('DROP TABLE IF EXISTS simulated_trades CASCADE;')
-            # print("TEMPORARY: Dropped 'simulated_trades' table.")
+            # --- IMPORTANT: Removed TEMPORARY DROP TABLE ---
+            # This line was: await conn.execute('DROP TABLE IF EXISTS simulated_trades CASCADE;')
+            # It has been removed to ensure data persistence.
+            # The table will now only be created if it doesn't exist.
 
-            # Create table with all expected columns in one go
+            # Create table if it doesn't exist, with all expected columns
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS simulated_trades (
                     id BIGINT PRIMARY KEY,
@@ -91,8 +93,23 @@ async def create_trades_table():
                 );
             ''')
             print("simulated_trades table checked/created with full schema.")
+
+            # Add columns if they don't exist (for existing tables from previous versions)
+            # This is a robust way to handle schema changes for existing deployments
+            try:
+                await conn.execute("ALTER TABLE simulated_trades ADD COLUMN IF NOT EXISTS ai_reasoning TEXT;")
+                print("Checked/Added 'ai_reasoning' column to 'simulated_trades' table.")
+            except Exception as e:
+                print(f"WARNING: Could not add 'ai_reasoning' column (might already exist): {e}")
+
+            try:
+                await conn.execute("ALTER TABLE simulated_trades ADD COLUMN IF NOT EXISTS sentiment_score NUMERIC(10, 8);")
+                print("Checked/Added 'sentiment_score' column to 'simulated_trades' table.")
+            except Exception as e:
+                print(f"WARNING: Could not add 'sentiment_score' column (might already exist): {e}")
+
         except Exception as e:
-            print(f"CRITICAL ERROR: Could not create/recreate simulated_trades table: {e}")
+            print(f"CRITICAL ERROR: Could not create/update simulated_trades table schema: {e}")
             raise
 
 # --- FastAPI Lifecycle Events (connect/disconnect DB) ---
@@ -118,6 +135,8 @@ async def fetch_coingecko_data(url: str):
     headers = {}
     if COINGECKO_API_KEY:
         headers["x-cg-demo-api-key"] = COINGECKO_API_KEY
+    else:
+        print("CoinGecko API Key is missing in fetch_coingecko_data. Requests might fail.")
 
     async with httpx.AsyncClient() as client:
         try:
@@ -134,7 +153,7 @@ async def fetch_coingecko_data(url: str):
             print(f"Unexpected Error fetching CoinGecko data from {url}: {e}")
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
-# --- Helper function to fetch sentiment data from SentiCrypt ---
+# --- NEW: Helper function to fetch sentiment data from SentiCrypt ---
 async def fetch_senticrypt_data():
     await asyncio.sleep(0.5)
     senticrypt_url = "https://api.senticrypt.com/v2/all.json"
@@ -165,7 +184,7 @@ async def fetch_crypto_news(limit: int = 5):
         print("ERROR: RAPIDAPI_KEY is not set. Cannot fetch crypto news.")
         return []
 
-    await asyncio.sleep(0.5) # Be polite to API
+    await asyncio.sleep(0.5)
     news_url = f"https://cryptoinfo.p.rapidapi.com/api/private/latest_news/rapid_api/news/{limit}"
     
     headers = {
@@ -176,13 +195,11 @@ async def fetch_crypto_news(limit: int = 5):
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(news_url, headers=headers, timeout=15.0) # Increased timeout for external API
+            response = await client.get(news_url, headers=headers, timeout=15.0)
             response.raise_for_status()
             data = response.json()
             
-            # The API returns a dictionary with a 'results' key containing the news list
             if data and isinstance(data, dict) and 'results' in data and isinstance(data['results'], list):
-                # Each news item might have 'title', 'link', 'published_date', 'source'
                 return data['results']
             return []
         except httpx.HTTPStatusError as e:
@@ -240,6 +257,20 @@ async def get_shib_historical_data():
     except Exception as e:
         print(f"Error in /shib-historical-data endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process historical data: {e}")
+
+@app.get("/crypto-news/{limit}")
+async def get_crypto_news(limit: int):
+    print(f"Received request for /crypto-news/{limit}")
+    try:
+        news_items = await fetch_crypto_news(limit)
+        print(f"Successfully fetched {len(news_items)} news items.")
+        return {"news": news_items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in /crypto-news endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch crypto news: {e}")
+
 
 @app.post("/ai-suggest-profit")
 async def ai_suggest_profit(request_body: dict):
