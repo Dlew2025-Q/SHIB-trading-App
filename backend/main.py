@@ -23,7 +23,7 @@ COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
 if not COINGECKO_API_KEY:
     print("WARNING: COINGECKO_API_KEY environment variable is not set!")
 
-GEMINI_API_KEY = "" # Handled by Canvas or can be set as env var for direct deployment
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") # Ensure GEMINI_API_KEY is read from env or defaults to empty string
 
 db_pool = None
 
@@ -32,17 +32,20 @@ async def connect_to_db():
     global db_pool
     DATABASE_URL = os.getenv("DATABASE_URL")
     if not DATABASE_URL:
-        print("ERROR: DATABASE_URL environment variable is not set!")
+        print("ERROR: DATABASE_URL environment variable is NOT SET! Database connection will fail.")
+        db_pool = None # Ensure pool is None if URL is missing
         return
 
     try:
-        db_pool = await asyncpg.create_pool(DATABASE_URL)
-        print("Successfully connected to PostgreSQL database.")
+        print(f"Attempting to connect to database using URL: {DATABASE_URL[:30]}...") # Print partial URL for security
+        db_pool = await asyncpg.create_pool(DATABASE_URL, timeout=10) # Add a timeout for connection
+        print("Successfully connected to PostgreSQL database pool.")
         await create_trades_table() # Ensure table exists and has correct schema on startup
     except Exception as e:
-        print(f"ERROR: Could not connect to database: {e}")
-        # If DB connection fails, ensure app doesn't crash but operates without DB
+        print(f"CRITICAL ERROR: Could not connect to or initialize database: {e}")
         db_pool = None # Set pool to None so endpoints can check this
+        # Re-raise the exception to make deployment fail loudly if DB is critical
+        raise
 
 async def disconnect_from_db():
     global db_pool
@@ -51,38 +54,55 @@ async def disconnect_from_db():
         print("Disconnected from PostgreSQL database.")
 
 async def create_trades_table():
-    async with db_pool.acquire() as conn:
-        # TEMPORARY: Drop table to ensure clean schema for testing
-        # WARNING: This will delete all existing data in 'simulated_trades' table!
-        await conn.execute('DROP TABLE IF EXISTS simulated_trades CASCADE;')
-        print("TEMPORARY: Dropped 'simulated_trades' table.")
+    if not db_pool:
+        print("WARNING: Skipping create_trades_table as db_pool is not established.")
+        return
 
-        # Create table with all expected columns
-        await conn.execute('''
-            CREATE TABLE simulated_trades (
-                id BIGINT PRIMARY KEY,
-                signal_type VARCHAR(10) NOT NULL,
-                entry_price NUMERIC(20, 8) NOT NULL,
-                take_profit_price NUMERIC(20, 8) NOT NULL,
-                stop_loss_price NUMERIC(20, 8) NOT NULL,
-                position_size NUMERIC(20, 8) NOT NULL,
-                status VARCHAR(20) NOT NULL,
-                outcome_price NUMERIC(20, 8),
-                profit_loss NUMERIC(20, 8),
-                timestamp BIGINT NOT NULL,
-                ai_reasoning TEXT,
-                sentiment_score NUMERIC(10, 8)
-            );
-        ''')
-        print("simulated_trades table created with full schema.")
+    async with db_pool.acquire() as conn:
+        try:
+            # TEMPORARY: Drop table to ensure clean schema for testing
+            # WARNING: This will delete all existing data in 'simulated_trades' table!
+            await conn.execute('DROP TABLE IF EXISTS simulated_trades CASCADE;')
+            print("TEMPORARY: Dropped 'simulated_trades' table.")
+
+            # Create table with all expected columns in one go
+            await conn.execute('''
+                CREATE TABLE simulated_trades (
+                    id BIGINT PRIMARY KEY,
+                    signal_type VARCHAR(10) NOT NULL,
+                    entry_price NUMERIC(20, 8) NOT NULL,
+                    take_profit_price NUMERIC(20, 8) NOT NULL,
+                    stop_loss_price NUMERIC(20, 8) NOT NULL,
+                    position_size NUMERIC(20, 8) NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    outcome_price NUMERIC(20, 8),
+                    profit_loss NUMERIC(20, 8),
+                    timestamp BIGINT NOT NULL,
+                    ai_reasoning TEXT,
+                    sentiment_score NUMERIC(10, 8)
+                );
+            ''')
+            print("simulated_trades table created with full schema.")
+        except Exception as e:
+            print(f"CRITICAL ERROR: Could not create/recreate simulated_trades table: {e}")
+            raise # Re-raise to make deployment fail
 
 # --- FastAPI Lifecycle Events (connect/disconnect DB) ---
 @app.on_event("startup")
 async def startup_event():
-    await connect_to_db()
+    print("Application startup event triggered.")
+    try:
+        await connect_to_db()
+        print("Startup: Database connection attempt completed.")
+    except Exception as e:
+        print(f"FATAL ERROR during application startup: {e}")
+        # Optionally, you might want to exit here if DB is absolutely critical
+        # import sys
+        # sys.exit(1)
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    print("Application shutdown event triggered.")
     await disconnect_from_db()
 
 # --- Helper function to make CoinGecko API calls ---
@@ -92,6 +112,8 @@ async def fetch_coingecko_data(url: str):
     headers = {}
     if COINGECKO_API_KEY:
         headers["x-cg-demo-api-key"] = COINGECKO_API_KEY
+    else:
+        print("CoinGecko API Key is missing in fetch_coingecko_data. Requests might fail.")
 
     async with httpx.AsyncClient() as client:
         try:
@@ -119,7 +141,7 @@ async def fetch_senticrypt_data():
             response.raise_for_status()
             data = response.json()
             
-            if data:
+            if data and isinstance(data, list) and len(data) > 0:
                 latest_sentiment = data[0] # Assuming the first entry is the most recent
                 return latest_sentiment.get('mean')
             return None
@@ -502,3 +524,4 @@ async def check_signal_outcome(trade_details: dict):
     except Exception as e:
         print(f"Error in /check-signal-outcome endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to check signal outcome: {e}")
+
