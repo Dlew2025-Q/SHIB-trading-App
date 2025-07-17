@@ -34,6 +34,13 @@
             0%, 100% { opacity: 1; }
             50% { opacity: .5; }
         }
+        .btn-secondary {
+            background-color: #374151;
+            color: #d1d5db;
+        }
+        .btn-secondary:hover {
+            background-color: #4b5563;
+        }
     </style>
 </head>
 <body class="p-4 sm:p-6 lg:p-8">
@@ -78,12 +85,18 @@
             <div id="news-panel" class="card p-6 lg:col-span-2"></div>
         </div>
 
-        <!-- NEW: Signal History Table -->
+        <!-- Signal History Table -->
         <div class="mt-6 card p-4 md:p-6">
-            <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
-                <i data-lucide="clock" class="mr-2 text-indigo-400"></i>
-                Recent Signal History
-            </h3>
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold text-white flex items-center">
+                    <i data-lucide="clock" class="mr-2 text-indigo-400"></i>
+                    Recent Signal History
+                </h3>
+                <button id="refresh-results-btn" class="btn-secondary text-sm font-semibold py-2 px-4 rounded-lg flex items-center disabled:opacity-50">
+                    <i data-lucide="refresh-cw" class="mr-2 h-4 w-4"></i>
+                    <span id="refresh-btn-text">Refresh Results</span>
+                </button>
+            </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm text-left text-gray-300">
                     <thead class="text-xs text-gray-400 uppercase bg-gray-900/50">
@@ -114,6 +127,7 @@
             let priceChart = null;
             let shibData = {};
             let historicalData = { prices: [] };
+            let allTrades = [];
 
             // --- UI Elements ---
             const priceCard = document.getElementById('price-card');
@@ -125,6 +139,8 @@
             const newsPanel = document.getElementById('news-panel');
             const historyTableBody = document.getElementById('history-table-body');
             const findTradeBtn = document.getElementById('find-trade-btn');
+            const refreshBtn = document.getElementById('refresh-results-btn');
+            const refreshBtnText = document.getElementById('refresh-btn-text');
             const errorBanner = document.getElementById('error-banner');
             const errorMessage = document.getElementById('error-message');
 
@@ -139,6 +155,7 @@
                 newsPanel.innerHTML = `<div class="h-48 pulse bg-gray-700 rounded-md"></div>`;
                 historyTableBody.innerHTML = `<tr><td colspan="5" class="p-4"><div class="h-8 pulse bg-gray-700 rounded-md"></div></td></tr>`;
                 findTradeBtn.disabled = true;
+                refreshBtn.disabled = true;
             };
 
             const updateStats = (data) => {
@@ -261,6 +278,7 @@
             };
 
             const updateHistoryTable = (trades) => {
+                allTrades = trades; // Store the latest trades globally
                 if (trades.length === 0) {
                     historyTableBody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-500">No trade history yet.</td></tr>`;
                     return;
@@ -318,7 +336,6 @@
                         fetch(`${API_BASE_URL}/shib-prices`),
                         fetch(`${API_BASE_URL}/shib-historical-data`),
                         fetch(`${API_BASE_URL}/crypto-news/5`),
-                        fetchAllTrades()
                     ]);
 
                     if (!pricesRes.ok || !historyRes.ok) throw new Error('Failed to fetch market data.');
@@ -336,13 +353,16 @@
                     } else {
                         updateNews([]);
                     }
+                    
+                    await fetchAllTrades();
 
                 } catch (err) {
                     console.error("Fetch Data Error:", err);
                     showError(err.message);
                 } finally {
                     findTradeBtn.disabled = false;
-                    lucide.createIcons(); // IMPORTANT: Re-render icons after updating innerHTML
+                    refreshBtn.disabled = false;
+                    lucide.createIcons();
                 }
             };
 
@@ -410,6 +430,50 @@
                     lucide.createIcons();
                 }
             });
+
+            // --- NEW: Function to check pending trades ---
+            const checkPendingTrades = async () => {
+                refreshBtn.disabled = true;
+                refreshBtnText.textContent = 'Refreshing...';
+                const refreshIcon = refreshBtn.querySelector('i');
+                refreshIcon.classList.add('animate-spin');
+
+                const pendingTrades = allTrades.filter(t => t.status === 'pending');
+                if (pendingTrades.length === 0) {
+                    console.log("No pending trades to check.");
+                    refreshBtn.disabled = false;
+                    refreshBtnText.textContent = 'Refresh Results';
+                    refreshIcon.classList.remove('animate-spin');
+                    return;
+                }
+
+                try {
+                    // Create an array of promises for each check
+                    const checkPromises = pendingTrades.map(trade => 
+                        fetch(`${API_BASE_URL}/check-signal-outcome`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(trade),
+                        })
+                    );
+                    
+                    // Wait for all checks to complete
+                    await Promise.all(checkPromises);
+
+                } catch (err) {
+                    console.error("Error checking pending trades:", err);
+                    showError("An error occurred while refreshing results.");
+                } finally {
+                    // Always refresh the trade list to show updated statuses
+                    await fetchAllTrades();
+                    refreshBtn.disabled = false;
+                    refreshBtnText.textContent = 'Refresh Results';
+                    refreshIcon.classList.remove('animate-spin');
+                    lucide.createIcons();
+                }
+            };
+
+            refreshBtn.addEventListener('click', checkPendingTrades);
 
             // --- Initial Load ---
             fetchInitialData();
