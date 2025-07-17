@@ -186,7 +186,7 @@ async def get_crypto_news_endpoint(limit: int):
     news_items = await fetch_crypto_news(limit)
     return {"news": news_items}
 
-# --- NEW MULTI-FACTOR AI SIGNAL ---
+# --- MULTI-FACTOR AI SIGNAL ---
 @app.post("/ai-trade-signal")
 async def ai_trade_signal(request_body: dict):
     current_price = request_body.get("current_price")
@@ -196,27 +196,16 @@ async def ai_trade_signal(request_body: dict):
     if not all([current_price, historical_ohlc, historical_volumes]):
         raise HTTPException(status_code=400, detail="Missing required data for AI signal.")
 
-    # --- Technical Analysis Helper Functions ---
     def calculate_sma(series, period):
         if len(series) < period: return None
         return sum(series[-period:]) / period
 
     def calculate_atr(ohlc_data, period=14):
         if len(ohlc_data) < period + 1: return None
-        true_ranges = []
-        for i in range(1, len(ohlc_data)):
-            high = ohlc_data[i][2]
-            low = ohlc_data[i][3]
-            prev_close = ohlc_data[i-1][4]
-            tr1 = high - low
-            tr2 = abs(high - prev_close)
-            tr3 = abs(low - prev_close)
-            true_range = max(tr1, tr2, tr3)
-            true_ranges.append(true_range)
+        true_ranges = [max(d[2] - d[3], abs(d[2] - ohlc_data[i-1][4]), abs(d[3] - ohlc_data[i-1][4])) for i, d in enumerate(ohlc_data) if i > 0]
         if not true_ranges: return None
         return np.mean(true_ranges[-period:])
 
-    # --- Calculate Indicators ---
     closing_prices = [d[4] for d in historical_ohlc]
     volumes = [v[1] for v in historical_volumes]
     
@@ -228,11 +217,8 @@ async def ai_trade_signal(request_body: dict):
         raise HTTPException(status_code=500, detail="Could not calculate necessary technical indicators.")
 
     yesterday_ohlc = historical_ohlc[-1]
-    yesterday_open = yesterday_ohlc[1]
-    yesterday_close = yesterday_ohlc[4]
-    yesterday_volume = volumes[-1]
+    yesterday_open, yesterday_close, yesterday_volume = yesterday_ohlc[1], yesterday_ohlc[4], volumes[-1]
 
-    # --- Construct the new super-prompt ---
     prompt_parts = [
         "You are a professional algorithmic trading analyst. Your task is to generate a trade signal for SHIB based on a specific multi-factor strategy. You must follow the rules precisely.",
         "\n--- Strategy Rules ---",
@@ -243,7 +229,6 @@ async def ai_trade_signal(request_body: dict):
         "   - **Take-Profit:** Entry Price +/- (1.5 * ATR)",
         "   - **Stop-Loss:** Entry Price -/+ (1.0 * ATR)",
         "5. **Final Decision:** A trade signal is only generated if ALL conditions (Regime, Volume, Entry) are met. If any condition fails, you MUST return a 'NEUTRAL' signal.",
-
         "\n--- Data Provided for Analysis ---",
         f"- Current Price (for Entry): ${current_price}",
         f"- Previous Day's Open: ${yesterday_open}",
@@ -252,7 +237,6 @@ async def ai_trade_signal(request_body: dict):
         f"- 10-Day Price SMA: ${price_sma_10:.8f}",
         f"- 10-Day Volume SMA: {volume_sma_10:,.0f}",
         f"- 14-Day ATR: ${atr_14:.8f}",
-        
         "\n--- Your Task ---",
         "1. Check if a LONG signal is valid: Is Previous Day Green? Is Volume Confirmed? Is Current Price > 10-Day Price SMA?",
         "2. Check if a SHORT signal is valid: Is Previous Day Red? Is Volume Confirmed? Is Current Price < 10-Day Price SMA?",
@@ -274,8 +258,7 @@ async def ai_trade_signal(request_body: dict):
                     "reasoning": {"type": "STRING"},
                     "take_profit_price": {"type": "NUMBER"},
                     "stop_loss_price": {"type": "NUMBER"}
-                },
-                "required": ["signal_type", "reasoning"]
+                }, "required": ["signal_type", "reasoning"]
             }
         }
     }
@@ -287,15 +270,72 @@ async def ai_trade_signal(request_body: dict):
             response = await client.post(gemini_api_url, json=payload, timeout=45.0)
             response.raise_for_status()
             result = response.json()
-        
         ai_response_text = result['candidates'][0]['content']['parts'][0]['text']
-        ai_response = json.loads(ai_response_text)
-        
-        return ai_response
-
+        return json.loads(ai_response_text)
     except Exception as e:
-        print(f"Error during AI signal generation: {e}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI signal generation: {e}")
+
+# --- NEW: AI STRATEGY REVIEW ENDPOINT ---
+@app.post("/ai-strategy-review")
+async def ai_strategy_review(trades: list[dict]):
+    if not trades:
+        raise HTTPException(status_code=400, detail="No trade history provided for review.")
+
+    # Format the trade history for the prompt
+    formatted_trades = []
+    for trade in trades:
+        formatted_trades.append(
+            f"- Date: {datetime.fromtimestamp(trade['timestamp']/1000).strftime('%Y-%m-%d')}, "
+            f"Type: {trade['signal_type']}, Status: {trade['status']}, "
+            f"Reasoning: '{trade['ai_reasoning']}'"
+        )
+    trade_history_str = "\n".join(formatted_trades)
+
+    prompt_parts = [
+        "You are an expert quantitative trading strategist. Your task is to analyze the performance of a trading algorithm and provide specific, actionable recommendations for improvement.",
+        "\n--- Current Strategy Rules ---",
+        "1. **Regime Filter:** LONG only if Price > 10-Day SMA; SHORT only if Price < 10-Day SMA.",
+        "2. **Volume Confirmation:** Signal only if Previous Day's Volume > 10-Day Volume SMA.",
+        "3. **Entry Signal:** Previous Green Candle for LONG; Previous Red Candle for SHORT.",
+        "4. **Exits:** Take-Profit at 1.5 * ATR; Stop-Loss at 1.0 * ATR.",
+        "\n--- Recent Trade History ---",
+        trade_history_str,
+        "\n--- Your Analysis Task ---",
+        "1. **Identify Patterns:** Analyze the losing trades. Is there a common reason for failure? (e.g., stop-loss too tight, entering too early, fighting a stronger trend, poor volume confirmation).",
+        "2. **Propose Adjustments:** Based on the patterns, suggest specific, numerical adjustments to the strategy rules. Do not be vague.",
+        "   - **Good Suggestion:** 'The stop-loss at 1.0 * ATR seems too tight, as several trades were stopped out just before reversing. Recommend testing a wider stop-loss of 1.2 * ATR.'",
+        "   - **Bad Suggestion:** 'Maybe adjust the stop-loss.'",
+        "3. **Format Response:** Provide your analysis in the following strict JSON format:",
+    ]
+
+    prompt = "\n".join(prompt_parts)
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "observations": {"type": "STRING", "description": "A summary of the key patterns observed in the losing trades."},
+                    "recommendations": {"type": "STRING", "description": "Specific, actionable suggestions for rule adjustments."}
+                }, "required": ["observations", "recommendations"]
+            }
+        }
+    }
+
+    gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(gemini_api_url, json=payload, timeout=60.0)
+            response.raise_for_status()
+            result = response.json()
+        ai_response_text = result['candidates'][0]['content']['parts'][0]['text']
+        return json.loads(ai_response_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI strategy review: {e}")
+
 
 @app.post("/save-trade")
 async def save_trade(trade_data: dict):
