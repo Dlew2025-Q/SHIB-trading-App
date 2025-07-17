@@ -170,18 +170,18 @@ async def fetch_senticrypt_data():
             print(f"Unexpected Error fetching SentiCrypt data: {e}")
             return None
 
-# --- Helper function to fetch crypto news ---
+# --- NEW: Updated function to fetch crypto news from the correct API ---
 async def fetch_crypto_news(limit: int = 5):
     if not RAPIDAPI_KEY:
         print("ERROR: RAPIDAPI_KEY is not set. Cannot fetch crypto news.")
         return []
 
     await asyncio.sleep(0.5)
-    news_url = f"https://cryptoinfo.p.rapidapi.com/api/private/latest_news/rapid_api/news/{limit}"
+    # Using the new Coin Echo API endpoint for news
+    news_url = f"https://coin-echo-crypto-news-aggregator-and-sentiment-analysis.p.rapidapi.com/api/news?limit={limit}"
     
     headers = {
-        'Content-Type': 'application/json',
-        'x-rapidapi-host': 'cryptoinfo.p.rapidapi.com',
+        'x-rapidapi-host': 'coin-echo-crypto-news-aggregator-and-sentiment-analysis.p.rapidapi.com',
         'x-rapidapi-key': RAPIDAPI_KEY
     }
 
@@ -191,18 +191,29 @@ async def fetch_crypto_news(limit: int = 5):
             response.raise_for_status()
             data = response.json()
             
-            if data and isinstance(data, dict) and 'results' in data and isinstance(data['results'], list):
-                return data['results']
+            # The new API returns a list of articles directly.
+            # We need to map the fields to what the frontend expects: 'title', 'url', 'source'.
+            if data and isinstance(data, list):
+                # Using a list comprehension to create the new list of news items
+                return [
+                    {
+                        "title": item.get("title"),
+                        "url": item.get("article_url"),
+                        "source": item.get("source")
+                    }
+                    for item in data
+                ]
             return []
         except httpx.HTTPStatusError as e:
             print(f"HTTP Error fetching Crypto News: {e.response.status_code} - {e.response.text}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Crypto News API error: {e.response.text}")
+            # Do not raise HTTPException for news, just return empty so the app doesn't crash
+            return []
         except httpx.RequestError as e:
             print(f"Network Error fetching Crypto News: {e}")
-            raise HTTPException(status_code=500, detail=f"Network error fetching Crypto News: {e}")
+            return []
         except Exception as e:
             print(f"Unexpected Error fetching Crypto News: {e}")
-            raise HTTPException(status_code=500, detail=f"An unexpected error occurred fetching Crypto News: {e}")
+            return []
 
 
 # --- Backend Endpoints ---
