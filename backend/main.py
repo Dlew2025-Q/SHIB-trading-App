@@ -9,8 +9,6 @@ import asyncpg
 import json
 from datetime import datetime, timedelta
 import numpy as np
-# The google_search tool will be provided by the environment
-from google_search import search
 
 app = FastAPI()
 
@@ -31,6 +29,11 @@ if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY environment variable is not set!")
 else:
     print(f"INFO: GEMINI_API_KEY loaded (starts with: {GEMINI_API_KEY[:5]}...)")
+
+# Re-added RAPIDAPI_KEY check, as it's now used again for news
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+if not RAPIDAPI_KEY:
+    print("WARNING: RAPIDAPI_KEY environment variable is not set! Crypto news will not work.")
 
 db_pool = None
 
@@ -121,6 +124,29 @@ async def fetch_coingecko_data(url: str):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
+# --- Helper function to fetch crypto news ---
+async def fetch_crypto_news(limit: int = 5):
+    if not RAPIDAPI_KEY:
+        print("ERROR: RAPIDAPI_KEY is not set. Cannot fetch crypto news.")
+        return []
+    await asyncio.sleep(0.5)
+    news_url = f"https://coin-echo-crypto-news-aggregator-and-sentiment-analysis.p.rapidapi.com/api/news?limit={limit}"
+    headers = {
+        'x-rapidapi-host': 'coin-echo-crypto-news-aggregator-and-sentiment-analysis.p.rapidapi.com',
+        'x-rapidapi-key': RAPIDAPI_KEY
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(news_url, headers=headers, timeout=15.0)
+            response.raise_for_status()
+            data = response.json()
+            if data and isinstance(data, list):
+                return [{"title": item.get("title"), "url": item.get("article_url"), "source": item.get("source")} for item in data]
+            return []
+        except Exception as e:
+            print(f"Error fetching Crypto News: {e}")
+            return []
+
 # --- Backend Endpoints ---
 @app.get("/")
 async def read_root():
@@ -155,26 +181,10 @@ async def get_shib_historical_data():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process historical data: {e}")
 
-# --- NEW: Updated endpoint to use Google Search for news ---
 @app.get("/crypto-news/{limit}")
 async def get_crypto_news_endpoint(limit: int):
-    try:
-        print("Fetching news from web search...")
-        search_results = search(queries=["Shiba Inu crypto news"])
-        
-        news_items = []
-        if search_results and search_results[0].results:
-            for result in search_results[0].results[:limit]:
-                news_items.append({
-                    "title": result.source_title,
-                    "url": result.url,
-                    "source": result.url.split('/')[2] # Extract domain as source
-                })
-        print(f"Successfully fetched {len(news_items)} news items from web search.")
-        return {"news": news_items}
-    except Exception as e:
-        print(f"Error fetching news from web search: {e}")
-        return {"news": []} # Return empty list on error to not crash the frontend
+    news_items = await fetch_crypto_news(limit)
+    return {"news": news_items}
 
 # --- MULTI-FACTOR AI SIGNAL ---
 @app.post("/ai-trade-signal")
