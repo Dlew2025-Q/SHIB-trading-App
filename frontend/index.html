@@ -1,44 +1,419 @@
-{
-  "name": "shib-trading-app-front-end",
-  "version": "0.1.0",
-  "private": true,
-  "dependencies": {
-    "@testing-library/jest-dom": "^5.17.0",
-    "@testing-library/react": "^13.4.0",
-    "@testing-library/user-event": "^13.5.0",
-    "chart.js": "^4.4.3",
-    "lucide-react": "^0.395.0",
-    "react": "^18.3.1",
-    "react-chartjs-2": "^5.2.0",
-    "react-dom": "^18.3.1",
-    "react-scripts": "5.0.1",
-    "web-vitals": "^2.1.4"
-  },
-  "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  },
-  "devDependencies": {
-    "tailwindcss": "^3.4.4"
-  }
-}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHIB Trading AI Dashboard</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for the price chart -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <!-- Lucide Icons for UI icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            background-color: #111827; /* bg-gray-900 */
+            color: #f9fafb; /* text-gray-50 */
+            font-family: 'Inter', sans-serif;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        .card {
+            background-color: #1f2937; /* bg-gray-800 */
+            border: 1px solid #374151; /* border-gray-700 */
+            border-radius: 1rem; /* rounded-2xl */
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: transform 0.3s;
+        }
+        .card:hover {
+            transform: scale(1.05);
+        }
+        .pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-6 lg:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-white">SHIB Trading AI Dashboard</h1>
+            <p class="text-gray-400 mt-1">Real-time analysis and AI-powered signals for Shiba Inu.</p>
+        </header>
+
+        <div id="error-banner" class="hidden bg-red-500/20 text-red-300 p-4 rounded-lg mb-6 border border-red-500/30">
+            <strong>Error:</strong> <span id="error-message"></span>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+            <div id="price-card" class="card p-4 md:p-6"></div>
+            <div id="change-card" class="card p-4 md:p-6"></div>
+            <div id="market-cap-card" class="card p-4 md:p-6"></div>
+            <div id="volume-card" class="card p-4 md:p-6"></div>
+        </div>
+
+        <!-- Main Content: Chart and AI Signal -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div class="lg:col-span-2 card p-4 md:p-6">
+                <h3 class="text-lg font-semibold text-white mb-4">30-Day Price Chart</h3>
+                <div class="h-80">
+                    <canvas id="priceChart"></canvas>
+                </div>
+            </div>
+            <div class="flex flex-col gap-6">
+                <div id="signal-display" class="card p-6"></div>
+                <button id="find-trade-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800/50 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 flex items-center justify-center shadow-lg hover:shadow-indigo-500/50">
+                    Find Next Trade
+                </button>
+            </div>
+        </div>
+
+        <!-- Performance and News -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div id="performance-panel" class="card p-6"></div>
+            <div id="news-panel" class="card p-6 lg:col-span-2"></div>
+        </div>
+
+        <!-- NEW: Signal History Table -->
+        <div class="mt-6 card p-4 md:p-6">
+            <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
+                <i data-lucide="clock" class="mr-2 text-indigo-400"></i>
+                Recent Signal History
+            </h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left text-gray-300">
+                    <thead class="text-xs text-gray-400 uppercase bg-gray-900/50">
+                        <tr>
+                            <th scope="col" class="px-4 py-3">Date</th>
+                            <th scope="col" class="px-4 py-3">Type</th>
+                            <th scope="col" class="px-4 py-3">Entry Price</th>
+                            <th scope="col" class="px-4 py-3">Status</th>
+                            <th scope="col" class="px-4 py-3">AI Reasoning</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body">
+                        <!-- History rows will be inserted here by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <footer class="text-center text-gray-500 text-xs mt-12 pb-4">
+        <p>Disclaimer: This is a simulation tool for educational purposes only. Not financial advice.</p>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- Configuration ---
+            const API_BASE_URL = "https://shib-trading-app.onrender.com";
+            let priceChart = null;
+            let shibData = {};
+            let historicalData = { prices: [] };
+
+            // --- UI Elements ---
+            const priceCard = document.getElementById('price-card');
+            const changeCard = document.getElementById('change-card');
+            const marketCapCard = document.getElementById('market-cap-card');
+            const volumeCard = document.getElementById('volume-card');
+            const signalDisplay = document.getElementById('signal-display');
+            const performancePanel = document.getElementById('performance-panel');
+            const newsPanel = document.getElementById('news-panel');
+            const historyTableBody = document.getElementById('history-table-body');
+            const findTradeBtn = document.getElementById('find-trade-btn');
+            const errorBanner = document.getElementById('error-banner');
+            const errorMessage = document.getElementById('error-message');
+
+            // --- Helper Functions ---
+            const showLoadingState = () => {
+                priceCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
+                changeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
+                marketCapCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
+                volumeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
+                signalDisplay.innerHTML = `<div class="h-32 pulse bg-gray-700 rounded-md"></div>`;
+                performancePanel.innerHTML = `<div class="h-24 pulse bg-gray-700 rounded-md"></div>`;
+                newsPanel.innerHTML = `<div class="h-48 pulse bg-gray-700 rounded-md"></div>`;
+                historyTableBody.innerHTML = `<tr><td colspan="5" class="p-4"><div class="h-8 pulse bg-gray-700 rounded-md"></div></td></tr>`;
+                findTradeBtn.disabled = true;
+            };
+
+            const updateStats = (data) => {
+                shibData = data;
+                const price = data.current_price ? `$${data.current_price.toFixed(8)}` : 'N/A';
+                const change = data.price_change_24h ? `${data.price_change_24h.toFixed(2)}%` : 'N/A';
+                const marketCap = data.market_cap ? `$${(data.market_cap / 1e9).toFixed(2)}B` : 'N/A';
+                const volume = data.total_volume ? `$${(data.total_volume / 1e6).toFixed(2)}M` : 'N/A';
+                const isPositive = data.price_change_24h > 0;
+
+                priceCard.innerHTML = `
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-sm text-gray-400">Current Price</p>
+                        <i data-lucide="trending-up" class="text-green-400"></i>
+                    </div>
+                    <h3 class="text-2xl md:text-3xl font-bold text-white">${price}</h3>`;
+                
+                changeCard.innerHTML = `
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-sm text-gray-400">24h Change</p>
+                        <i data-lucide="${isPositive ? 'arrow-up' : 'arrow-down'}" class="${isPositive ? 'text-green-400' : 'text-red-400'}"></i>
+                    </div>
+                    <h3 class="text-2xl md:text-3xl font-bold text-white">${change}</h3>`;
+
+                marketCapCard.innerHTML = `
+                     <div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">Market Cap</p></div>
+                     <h3 class="text-2xl md:text-3xl font-bold text-white">${marketCap}</h3>`;
+
+                volumeCard.innerHTML = `
+                     <div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h Volume</p></div>
+                     <h3 class="text-2xl md:text-3xl font-bold text-white">${volume}</h3>`;
+            };
+
+            const updateChart = (data) => {
+                historicalData = data;
+                const ctx = document.getElementById('priceChart').getContext('2d');
+                if (priceChart) {
+                    priceChart.destroy();
+                }
+                priceChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.prices.map(p => new Date(p[0]).toLocaleDateString()),
+                        datasets: [{
+                            label: 'SHIB Price (USD)',
+                            data: data.prices.map(p => p[1]),
+                            borderColor: 'rgba(99, 102, 241, 1)',
+                            backgroundColor: 'rgba(99, 102, 241, 0.2)',
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { display: false },
+                            y: { ticks: { callback: (value) => `$${value.toFixed(8)}`, color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                        }
+                    }
+                });
+            };
+            
+            const updateSignal = (signal, reasoning, sentimentScore) => {
+                 let colorClass = 'bg-yellow-500/20 text-yellow-400';
+                 let icon = 'help-circle';
+                 if (signal === 'LONG') {
+                     colorClass = 'bg-green-500/20 text-green-400';
+                     icon = 'trending-up';
+                 } else if (signal === 'SHORT') {
+                     colorClass = 'bg-red-500/20 text-red-400';
+                     icon = 'arrow-down';
+                 }
+                 
+                 let sentimentHTML = sentimentScore !== null && sentimentScore !== undefined 
+                    ? `<p class="text-xs text-gray-500 mt-3">Sentiment Score Used: ${sentimentScore.toFixed(4)}</p>` 
+                    : '';
+
+                 signalDisplay.innerHTML = `
+                    <h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="brain-circuit" class="mr-2 text-indigo-400"></i> AI Trade Signal</h3>
+                    <div class="text-center">
+                        <div class="inline-flex items-center justify-center px-6 py-3 rounded-full text-2xl font-bold mb-4 ${colorClass}">
+                            <i data-lucide="${icon}" class="mr-2"></i> ${signal}
+                        </div>
+                        <p class="text-gray-300 text-sm italic px-4">${reasoning}</p>
+                        ${sentimentHTML}
+                    </div>`;
+            };
+
+            const updatePerformance = (trades) => {
+                const totalTrades = trades.length;
+                const wins = trades.filter(t => t.status === 'win').length;
+                const accuracy = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : "0.0";
+                performancePanel.innerHTML = `
+                    <h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="bar-chart" class="mr-2 text-indigo-400"></i> Performance</h3>
+                    <div class="grid grid-cols-2 gap-4 text-center">
+                        <div><p class="text-3xl font-bold text-white">${totalTrades}</p><p class="text-sm text-gray-400">Total Signals</p></div>
+                        <div><p class="text-3xl font-bold text-green-400">${accuracy}%</p><p class="text-sm text-gray-400">Accuracy</p></div>
+                    </div>`;
+            };
+
+            const updateNews = (news) => {
+                let newsHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="rss" class="mr-2 text-indigo-400"></i> Latest Crypto News</h3>`;
+                if (news.length > 0) {
+                    newsHTML += '<div class="space-y-4 max-h-96 overflow-y-auto pr-2">';
+                    news.forEach(item => {
+                        newsHTML += `
+                            <a href="${item.url}" target="_blank" rel="noopener noreferrer" class="block p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-colors">
+                                <p class="font-semibold text-sm text-gray-200 truncate">${item.title}</p>
+                                <p class="text-xs text-gray-400">${item.source}</p>
+                            </a>`;
+                    });
+                    newsHTML += '</div>';
+                } else {
+                    newsHTML += `<p class="text-gray-400 text-center py-8">Could not load news. API key may be missing.</p>`;
+                }
+                newsPanel.innerHTML = newsHTML;
+            };
+
+            const updateHistoryTable = (trades) => {
+                if (trades.length === 0) {
+                    historyTableBody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-500">No trade history yet.</td></tr>`;
+                    return;
+                }
+                let tableHTML = '';
+                trades.slice(0, 10).forEach(trade => {
+                    let statusIcon = 'minus-circle';
+                    let statusColor = 'text-gray-500';
+                    if (trade.status === 'win') { statusIcon = 'check-circle'; statusColor = 'text-green-500'; }
+                    if (trade.status === 'loss') { statusIcon = 'x-circle'; statusColor = 'text-red-500'; }
+                    if (trade.status === 'pending') { statusIcon = 'clock'; statusColor = 'text-yellow-500'; }
+                    
+                    tableHTML += `
+                        <tr class="border-b border-gray-700 hover:bg-gray-700/30">
+                            <td class="px-4 py-4 font-medium whitespace-nowrap">${new Date(trade.timestamp).toLocaleString()}</td>
+                            <td class="px-4 py-4">
+                                <span class="px-2 py-1 rounded-full text-xs font-semibold ${trade.signalType === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${trade.signalType}</span>
+                            </td>
+                            <td class="px-4 py-4">$${trade.entryPrice.toFixed(8)}</td>
+                            <td class="px-4 py-4">
+                                <div class="flex items-center space-x-2 ${statusColor}">
+                                    <i data-lucide="${statusIcon}"></i>
+                                    <span class="capitalize">${trade.status}</span>
+                                </div>
+                            </td>
+                            <td class="px-4 py-4 text-gray-400 italic max-w-xs truncate" title="${trade.aiReasoning}">${trade.aiReasoning}</td>
+                        </tr>`;
+                });
+                historyTableBody.innerHTML = tableHTML;
+            };
+
+            const showError = (message) => {
+                errorMessage.textContent = message;
+                errorBanner.classList.remove('hidden');
+            };
+
+            // --- API Calls ---
+            const fetchAllTrades = async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/get-all-trades`);
+                    if (!res.ok) throw new Error('Failed to fetch trade history.');
+                    const data = await res.json();
+                    updatePerformance(data.trades || []);
+                    updateHistoryTable(data.trades || []);
+                } catch (err) {
+                    console.error("Fetch Trades Error:", err);
+                    showError(err.message);
+                }
+            };
+
+            const fetchInitialData = async () => {
+                showLoadingState();
+                try {
+                    const [pricesRes, historyRes, newsRes] = await Promise.all([
+                        fetch(`${API_BASE_URL}/shib-prices`),
+                        fetch(`${API_BASE_URL}/shib-historical-data`),
+                        fetch(`${API_BASE_URL}/crypto-news/5`),
+                        fetchAllTrades()
+                    ]);
+
+                    if (!pricesRes.ok || !historyRes.ok) throw new Error('Failed to fetch market data.');
+                    
+                    const pricesData = await pricesRes.json();
+                    const historyData = await historyRes.json();
+                    
+                    updateStats(pricesData);
+                    updateChart(historyData);
+                    updateSignal('NEUTRAL', 'Click "Find Next Trade" to get an AI analysis.', null);
+
+                    if (newsRes.ok) {
+                        const newsData = await newsRes.json();
+                        updateNews(newsData.news || []);
+                    } else {
+                        updateNews([]);
+                    }
+
+                } catch (err) {
+                    console.error("Fetch Data Error:", err);
+                    showError(err.message);
+                } finally {
+                    findTradeBtn.disabled = false;
+                    lucide.createIcons(); // IMPORTANT: Re-render icons after updating innerHTML
+                }
+            };
+
+            findTradeBtn.addEventListener('click', async () => {
+                if (!shibData.current_price) {
+                    alert("Market data not loaded yet. Please wait.");
+                    return;
+                }
+                findTradeBtn.disabled = true;
+                findTradeBtn.innerHTML = 'Analyzing...';
+                errorBanner.classList.add('hidden');
+
+                try {
+                    const requestBody = {
+                        current_price: shibData.current_price,
+                        price_change_24h: shibData.price_change_24h,
+                        historical_prices: historicalData.prices.map(p => p[1]),
+                        strategy_name: "default",
+                        sentiment_filter_enabled: true
+                    };
+
+                    const res = await fetch(`${API_BASE_URL}/ai-trade-signal`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody),
+                    });
+
+                    if (!res.ok) {
+                        const errData = await res.json();
+                        throw new Error(errData.detail || `AI Signal Error: ${res.statusText}`);
+                    }
+
+                    const signalData = await res.json();
+                    updateSignal(signalData.signal_type, signalData.reasoning, signalData.sentiment_score);
+
+                    if (signalData.signal_type !== 'NEUTRAL') {
+                        const trade = {
+                            id: Date.now(),
+                            signalType: signalData.signal_type,
+                            entryPrice: shibData.current_price,
+                            takeProfitPrice: shibData.current_price * (signalData.signal_type === 'LONG' ? 1.02 : 0.98),
+                            stopLossPrice: shibData.current_price * (signalData.signal_type === 'LONG' ? 0.99 : 1.01),
+                            positionSize: 1000,
+                            status: 'pending',
+                            outcomePrice: null,
+                            profitLoss: null,
+                            timestamp: Date.now(),
+                            aiReasoning: signalData.reasoning,
+                            sentimentScore: signalData.sentiment_score
+                        };
+                        await fetch(`${API_BASE_URL}/save-trade`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(trade),
+                        });
+                        await fetchAllTrades(); // Refresh history after saving
+                    }
+                } catch (err) {
+                    console.error("Find Trade Error:", err);
+                    showError(err.message);
+                    updateSignal('ERROR', `Failed to get signal: ${err.message}`, null);
+                } finally {
+                    findTradeBtn.disabled = false;
+                    findTradeBtn.innerHTML = 'Find Next Trade';
+                    lucide.createIcons();
+                }
+            });
+
+            // --- Initial Load ---
+            fetchInitialData();
+        });
+    </script>
+</body>
+</html>
