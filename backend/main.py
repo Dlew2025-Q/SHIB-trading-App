@@ -186,7 +186,7 @@ async def get_crypto_news_endpoint(limit: int):
     news_items = await fetch_crypto_news(limit)
     return {"news": news_items}
 
-# --- MULTI-FACTOR AI SIGNAL ---
+# --- NEW MULTI-FACTOR AI SIGNAL ---
 @app.post("/ai-trade-signal")
 async def ai_trade_signal(request_body: dict):
     current_price = request_body.get("current_price")
@@ -274,68 +274,6 @@ async def ai_trade_signal(request_body: dict):
         return json.loads(ai_response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI signal generation: {e}")
-
-# --- NEW: AI STRATEGY REVIEW ENDPOINT ---
-@app.post("/ai-strategy-review")
-async def ai_strategy_review(trades: list[dict]):
-    if not trades:
-        raise HTTPException(status_code=400, detail="No trade history provided for review.")
-
-    # Format the trade history for the prompt
-    formatted_trades = []
-    for trade in trades:
-        formatted_trades.append(
-            f"- Date: {datetime.fromtimestamp(trade['timestamp']/1000).strftime('%Y-%m-%d')}, "
-            f"Type: {trade['signal_type']}, Status: {trade['status']}, "
-            f"Reasoning: '{trade['ai_reasoning']}'"
-        )
-    trade_history_str = "\n".join(formatted_trades)
-
-    prompt_parts = [
-        "You are an expert quantitative trading strategist. Your task is to analyze the performance of a trading algorithm and provide specific, actionable recommendations for improvement.",
-        "\n--- Current Strategy Rules ---",
-        "1. **Regime Filter:** LONG only if Price > 10-Day SMA; SHORT only if Price < 10-Day SMA.",
-        "2. **Volume Confirmation:** Signal only if Previous Day's Volume > 10-Day Volume SMA.",
-        "3. **Entry Signal:** Previous Green Candle for LONG; Previous Red Candle for SHORT.",
-        "4. **Exits:** Take-Profit at 1.5 * ATR; Stop-Loss at 1.0 * ATR.",
-        "\n--- Recent Trade History ---",
-        trade_history_str,
-        "\n--- Your Analysis Task ---",
-        "1. **Identify Patterns:** Analyze the losing trades. Is there a common reason for failure? (e.g., stop-loss too tight, entering too early, fighting a stronger trend, poor volume confirmation).",
-        "2. **Propose Adjustments:** Based on the patterns, suggest specific, numerical adjustments to the strategy rules. Do not be vague.",
-        "   - **Good Suggestion:** 'The stop-loss at 1.0 * ATR seems too tight, as several trades were stopped out just before reversing. Recommend testing a wider stop-loss of 1.2 * ATR.'",
-        "   - **Bad Suggestion:** 'Maybe adjust the stop-loss.'",
-        "3. **Format Response:** Provide your analysis in the following strict JSON format:",
-    ]
-
-    prompt = "\n".join(prompt_parts)
-
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {
-                    "observations": {"type": "STRING", "description": "A summary of the key patterns observed in the losing trades."},
-                    "recommendations": {"type": "STRING", "description": "Specific, actionable suggestions for rule adjustments."}
-                }, "required": ["observations", "recommendations"]
-            }
-        }
-    }
-
-    gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(gemini_api_url, json=payload, timeout=60.0)
-            response.raise_for_status()
-            result = response.json()
-        ai_response_text = result['candidates'][0]['content']['parts'][0]['text']
-        return json.loads(ai_response_text)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI strategy review: {e}")
-
 
 @app.post("/save-trade")
 async def save_trade(trade_data: dict):
