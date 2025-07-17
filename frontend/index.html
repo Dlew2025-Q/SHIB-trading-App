@@ -135,7 +135,7 @@
             const API_BASE_URL = "https://shib-trading-app.onrender.com";
             let priceChart = null;
             let shibData = {};
-            let historicalData = { prices: [] };
+            let historicalData = { ohlc: [], volumes: [] }; // NEW: Updated data structure
             let allTrades = [];
 
             // --- UI Elements ---
@@ -200,6 +200,9 @@
 
             const updateChart = (data) => {
                 historicalData = data;
+                const closingPrices = data.ohlc.map(d => d[4]); // Use closing price for the line chart
+                const labels = data.ohlc.map(d => new Date(d[0]).toLocaleDateString());
+
                 const ctx = document.getElementById('priceChart').getContext('2d');
                 if (priceChart) {
                     priceChart.destroy();
@@ -207,10 +210,10 @@
                 priceChart = new Chart(ctx, {
                     type: 'line',
                     data: {
-                        labels: data.prices.map(p => new Date(p[0]).toLocaleDateString()),
+                        labels: labels,
                         datasets: [{
                             label: 'SHIB Price (USD)',
-                            data: data.prices.map(p => p[1]),
+                            data: closingPrices,
                             borderColor: 'rgba(99, 102, 241, 1)',
                             backgroundColor: 'rgba(99, 102, 241, 0.2)',
                             fill: true,
@@ -300,11 +303,11 @@
                     if (trade.status === 'loss') { statusIcon = 'x-circle'; statusColor = 'text-red-500'; }
                     if (trade.status === 'pending') { statusIcon = 'clock'; statusColor = 'text-yellow-500'; }
                     
-                    const entry = trade.entryPrice;
-                    const exit = trade.takeProfitPrice;
+                    const entry = trade.entry_price;
+                    const exit = trade.take_profit_price;
                     let profitPct = 0;
                     if (entry > 0) {
-                        if (trade.signalType === 'LONG') {
+                        if (trade.signal_type === 'LONG') {
                             profitPct = ((exit - entry) / entry) * 100;
                         } else { // SHORT
                             profitPct = ((entry - exit) / entry) * 100;
@@ -315,10 +318,10 @@
                         <tr class="border-b border-gray-700 hover:bg-gray-700/30">
                             <td class="px-4 py-4 font-medium whitespace-nowrap">${new Date(trade.timestamp).toLocaleString()}</td>
                             <td class="px-4 py-4">
-                                <span class="px-2 py-1 rounded-full text-xs font-semibold ${trade.signalType === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${trade.signalType}</span>
+                                <span class="px-2 py-1 rounded-full text-xs font-semibold ${trade.signal_type === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${trade.signal_type}</span>
                             </td>
-                            <td class="px-4 py-4">$${trade.entryPrice.toFixed(8)}</td>
-                            <td class="px-4 py-4">$${trade.takeProfitPrice.toFixed(8)}</td>
+                            <td class="px-4 py-4">$${entry.toFixed(8)}</td>
+                            <td class="px-4 py-4">$${exit.toFixed(8)}</td>
                             <td class="px-4 py-4 font-semibold ${profitPct >= 0 ? 'text-green-400' : 'text-red-400'}">${profitPct.toFixed(2)}%</td>
                             <td class="px-4 py-4">
                                 <div class="flex items-center space-x-2 ${statusColor}">
@@ -326,7 +329,7 @@
                                     <span class="capitalize">${trade.status}</span>
                                 </div>
                             </td>
-                            <td class="px-4 py-4 text-gray-400 italic max-w-xs truncate" title="${trade.aiReasoning}">${trade.aiReasoning}</td>
+                            <td class="px-4 py-4 text-gray-400 italic max-w-xs truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning}</td>
                         </tr>`;
                 });
                 historyTableBody.innerHTML = tableHTML;
@@ -354,24 +357,23 @@
             const fetchInitialData = async () => {
                 showLoadingState();
                 try {
-                    const [pricesRes, historyRes, newsRes] = await Promise.all([
+                    const [pricesRes, histRes, newsRes] = await Promise.all([
                         fetch(`${API_BASE_URL}/shib-prices`),
                         fetch(`${API_BASE_URL}/shib-historical-data`),
                         fetch(`${API_BASE_URL}/crypto-news/5`),
                     ]);
 
-                    if (!pricesRes.ok || !historyRes.ok) throw new Error('Failed to fetch market data.');
+                    if (!pricesRes.ok || !histRes.ok) throw new Error('Failed to fetch market data.');
                     
                     const pricesData = await pricesRes.json();
-                    const historyData = await historyRes.json();
+                    const historyData = await histRes.json();
                     
                     updateStats(pricesData);
                     updateChart(historyData);
                     updateSignal('NEUTRAL', 'Click "Find Next Trade" to get an AI analysis.', null);
 
                     if (newsRes.ok) {
-                        const newsData = await newsRes.json();
-                        updateNews(newsData.news || []);
+                        updateNews(await newsRes.json().then(d => d.news || []));
                     } else {
                         updateNews([]);
                     }
@@ -400,10 +402,8 @@
                 try {
                     const requestBody = {
                         current_price: shibData.current_price,
-                        price_change_24h: shibData.price_change_24h,
-                        historical_prices: historicalData.prices.map(p => p[1]),
-                        strategy_name: "default",
-                        sentiment_filter_enabled: true
+                        historical_ohlc: historicalData.ohlc,
+                        historical_volumes: historicalData.volumes
                     };
 
                     const res = await fetch(`${API_BASE_URL}/ai-trade-signal`, {
@@ -418,22 +418,19 @@
                     }
 
                     const signalData = await res.json();
-                    updateSignal(signalData.signal_type, signalData.reasoning, signalData.sentiment_score);
+                    updateSignal(signalData.signal_type, signalData.reasoning, null);
 
                     if (signalData.signal_type !== 'NEUTRAL') {
                         const trade = {
                             id: Date.now(),
                             signalType: signalData.signal_type,
                             entryPrice: shibData.current_price,
-                            takeProfitPrice: shibData.current_price * (signalData.signal_type === 'LONG' ? 1.02 : 0.98),
-                            stopLossPrice: shibData.current_price * (signalData.signal_type === 'LONG' ? 0.99 : 1.01),
+                            takeProfitPrice: signalData.take_profit_price, // Use AI-generated TP
+                            stopLossPrice: signalData.stop_loss_price,     // Use AI-generated SL
                             positionSize: 1000,
                             status: 'pending',
-                            outcomePrice: null,
-                            profitLoss: null,
                             timestamp: Date.now(),
                             aiReasoning: signalData.reasoning,
-                            sentimentScore: signalData.sentiment_score
                         };
                         await fetch(`${API_BASE_URL}/save-trade`, {
                             method: 'POST',
@@ -453,50 +450,44 @@
                 }
             });
 
-            // --- Function to check pending trades ---
             const checkPendingTrades = async () => {
                 refreshBtn.disabled = true;
                 refreshBtnText.textContent = 'Refreshing...';
                 const refreshIcon = refreshBtn.querySelector('i');
-                if (refreshIcon) {
-                    refreshIcon.classList.add('animate-spin');
-                }
+                if (refreshIcon) refreshIcon.classList.add('animate-spin');
 
                 const pendingTrades = allTrades.filter(t => t.status === 'pending');
                 if (pendingTrades.length === 0) {
-                    console.log("No pending trades to check.");
                     refreshBtn.disabled = false;
                     refreshBtnText.textContent = 'Refresh Results';
-                    if (refreshIcon) {
-                       refreshIcon.classList.remove('animate-spin');
-                    }
+                    if (refreshIcon) refreshIcon.classList.remove('animate-spin');
                     return;
                 }
 
                 try {
-                    // Create an array of promises for each check
                     const checkPromises = pendingTrades.map(trade => 
                         fetch(`${API_BASE_URL}/check-signal-outcome`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(trade),
+                            body: JSON.stringify({
+                                // Map frontend snake_case to backend camelCase if needed, but backend expects snake_case now
+                                id: trade.id,
+                                entry_price: trade.entry_price,
+                                take_profit_price: trade.take_profit_price,
+                                stop_loss_price: trade.stop_loss_price,
+                                signal_type: trade.signal_type,
+                                timestamp: trade.timestamp
+                            }),
                         })
                     );
-                    
-                    // Wait for all checks to complete
                     await Promise.all(checkPromises);
-
                 } catch (err) {
-                    console.error("Error checking pending trades:", err);
                     showError("An error occurred while refreshing results.");
                 } finally {
-                    // Always refresh the trade list to show updated statuses
                     await fetchAllTrades();
                     refreshBtn.disabled = false;
                     refreshBtnText.textContent = 'Refresh Results';
-                    if (refreshIcon) {
-                        refreshIcon.classList.remove('animate-spin');
-                    }
+                    if (refreshIcon) refreshIcon.classList.remove('animate-spin');
                     lucide.createIcons();
                 }
             };
