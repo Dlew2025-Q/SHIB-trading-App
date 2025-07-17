@@ -280,7 +280,7 @@ async def ai_trade_signal(request_body: dict):
         }
     }
     
-    gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
 
     try:
         async with httpx.AsyncClient() as client:
@@ -296,8 +296,6 @@ async def ai_trade_signal(request_body: dict):
     except Exception as e:
         print(f"Error during AI signal generation: {e}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI signal generation: {e}")
-
-# --- Other Endpoints (save-trade, get-all-trades, check-signal-outcome) remain the same ---
 
 @app.post("/save-trade")
 async def save_trade(trade_data: dict):
@@ -332,11 +330,10 @@ async def get_all_trades():
 
 @app.post("/check-signal-outcome")
 async def check_signal_outcome(trade_details: dict):
-    # This function remains the same as it correctly checks outcomes based on saved TP/SL levels.
-    entry_price = trade_details.get("entryPrice")
-    take_profit_price = trade_details.get("takeProfitPrice")
-    stop_loss_price = trade_details.get("stopLossPrice")
-    signal_type = trade_details.get("signalType")
+    entry_price = trade_details.get("entry_price")
+    take_profit_price = trade_details.get("take_profit_price")
+    stop_loss_price = trade_details.get("stop_loss_price")
+    signal_type = trade_details.get("signal_type")
     timestamp = trade_details.get("timestamp")
     trade_id = trade_details.get("id")
 
