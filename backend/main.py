@@ -141,8 +141,8 @@ async def get_shib_prices():
 
 @app.get("/shib-historical-data")
 async def get_shib_historical_data():
-    ohlc_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/ohlc?vs_currency=usd&days=7"
-    volume_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=7"
+    ohlc_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/ohlc?vs_currency=usd&days=30" # Fetch 30 days for 20-day SMA
+    volume_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=30"
     try:
         ohlc_data = await fetch_coingecko_data(ohlc_url)
         volume_data = await fetch_coingecko_data(volume_url)
@@ -188,39 +188,49 @@ async def ai_trade_signal(request_body: dict):
     volumes = [v[1] for v in historical_volumes]
     
     price_sma_10 = calculate_sma(closing_prices, 10)
+    price_sma_20 = calculate_sma(closing_prices, 20) # NEW: Calculate 20-day SMA
     volume_sma_10 = calculate_sma(volumes, 10)
     atr_14 = calculate_atr(historical_ohlc, 14)
 
-    if not all([price_sma_10, volume_sma_10, atr_14]):
+    if not all([price_sma_10, price_sma_20, volume_sma_10, atr_14]):
         raise HTTPException(status_code=500, detail="Could not calculate necessary technical indicators.")
 
     yesterday_ohlc = historical_ohlc[-1]
     yesterday_open, yesterday_close, yesterday_volume = yesterday_ohlc[1], yesterday_ohlc[4], volumes[-1]
+    candle_body_size = abs(yesterday_close - yesterday_open)
 
     prompt_parts = [
-        "You are a professional algorithmic trading analyst. Your task is to generate a trade signal for SHIB based on a specific multi-factor strategy. You must follow the rules precisely.",
-        "\n--- Strategy Rules ---",
-        "1. **Market Regime Filter:** Use the 10-day Simple Moving Average (SMA) of the price. A LONG trade is ONLY allowed if the current price is ABOVE the 10-day SMA. A SHORT trade is ONLY allowed if the current price is BELOW the 10-day SMA.",
-        "2. **Volume Confirmation:** A signal is only valid if the previous day's trading volume was GREATER than the 10-day SMA of volume. This confirms market conviction.",
-        "3. **Entry Signal:** The basic signal comes from the previous day's candle color. Green candle (Close > Open) for a potential LONG. Red candle (Close < Open) for a potential SHORT.",
-        "4. **Dynamic Exits (ATR):** All exit points must be calculated using the provided 14-day Average True Range (ATR).",
+        "You are a professional algorithmic trading analyst. Your task is to generate a trade signal for SHIB based on a specific, upgraded multi-factor strategy. You must follow the rules precisely.",
+        "\n--- Strategy Rules (Version 2.0) ---",
+        "1. **Market Regime Filter (Stricter):**",
+        "   - **LONG:** Allowed ONLY if Current Price > 20-Day SMA AND 10-Day SMA > 20-Day SMA.",
+        "   - **SHORT:** Allowed ONLY if Current Price < 10-Day SMA (original rule).",
+        "2. **Volume Confirmation:** Signal only if Previous Day's Volume > 10-Day Volume SMA.",
+        "3. **Entry Signal (Refined):**",
+        "   - **LONG:** Previous candle must be green (Close > Open) AND its body size (Close - Open) must be > (0.5 * ATR).",
+        "   - **SHORT:** Previous candle must be red (Close < Open).",
+        "4. **Dynamic Exits (Adjusted Risk):**",
         "   - **Take-Profit:** Entry Price +/- (1.5 * ATR)",
-        "   - **Stop-Loss:** Entry Price -/+ (1.0 * ATR)",
-        "5. **Final Decision:** A trade signal is only generated if ALL conditions (Regime, Volume, Entry) are met. If any condition fails, you MUST return a 'NEUTRAL' signal.",
+        "   - **Stop-Loss:** Entry Price -/+ (1.5 * ATR) (WIDER STOP)",
+        "5. **Final Decision:** A trade signal is only generated if ALL conditions for that direction are met. If any condition fails, you MUST return a 'NEUTRAL' signal.",
+
         "\n--- Data Provided for Analysis ---",
         f"- Current Price (for Entry): ${current_price}",
         f"- Previous Day's Open: ${yesterday_open}",
         f"- Previous Day's Close: ${yesterday_close}",
+        f"- Previous Day's Candle Body Size: ${candle_body_size:.8f}",
         f"- Previous Day's Volume: {yesterday_volume:,.0f}",
         f"- 10-Day Price SMA: ${price_sma_10:.8f}",
+        f"- 20-Day Price SMA: ${price_sma_20:.8f}",
         f"- 10-Day Volume SMA: {volume_sma_10:,.0f}",
         f"- 14-Day ATR: ${atr_14:.8f}",
+        
         "\n--- Your Task ---",
-        "1. Check if a LONG signal is valid: Is Previous Day Green? Is Volume Confirmed? Is Current Price > 10-Day Price SMA?",
-        "2. Check if a SHORT signal is valid: Is Previous Day Red? Is Volume Confirmed? Is Current Price < 10-Day Price SMA?",
-        "3. If a valid signal exists, calculate the take_profit_price and stop_loss_price using the ATR.",
+        "1. Check if a LONG signal is valid based on the new, stricter rules.",
+        "2. Check if a SHORT signal is valid based on its rules.",
+        "3. If a valid signal exists, calculate the take_profit_price and stop_loss_price using the updated ATR multiples.",
         "4. If no signal is valid, signal NEUTRAL.",
-        "5. Provide your response in the following strict JSON format. Provide a concise reasoning based on the rules.",
+        "5. Provide your response in the following strict JSON format.",
     ]
     
     prompt = "\n".join(prompt_parts)
