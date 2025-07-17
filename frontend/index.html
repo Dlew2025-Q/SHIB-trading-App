@@ -41,6 +41,13 @@
         .btn-secondary:hover {
             background-color: #4b5563;
         }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body class="p-4 sm:p-6 lg:p-8">
@@ -446,19 +453,23 @@
                 }
             });
 
-            // --- NEW: Function to check pending trades ---
+            // --- Function to check pending trades ---
             const checkPendingTrades = async () => {
                 refreshBtn.disabled = true;
                 refreshBtnText.textContent = 'Refreshing...';
-                const refreshIcon = refreshBtn.querySelector('i');
-                refreshIcon.classList.add('animate-spin');
+                const refreshIcon = refreshBtn.children[0]; // FIX: More robust selector for the icon
+                if (refreshIcon) {
+                    refreshIcon.classList.add('animate-spin');
+                }
 
                 const pendingTrades = allTrades.filter(t => t.status === 'pending');
                 if (pendingTrades.length === 0) {
                     console.log("No pending trades to check.");
                     refreshBtn.disabled = false;
                     refreshBtnText.textContent = 'Refresh Results';
-                    refreshIcon.classList.remove('animate-spin');
+                    if (refreshIcon) {
+                       refreshIcon.classList.remove('animate-spin');
+                    }
                     return;
                 }
 
@@ -483,7 +494,9 @@
                     await fetchAllTrades();
                     refreshBtn.disabled = false;
                     refreshBtnText.textContent = 'Refresh Results';
-                    refreshIcon.classList.remove('animate-spin');
+                    if (refreshIcon) {
+                        refreshIcon.classList.remove('animate-spin');
+                    }
                     lucide.createIcons();
                 }
             };
