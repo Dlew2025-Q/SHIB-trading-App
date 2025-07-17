@@ -303,7 +303,7 @@ export default function App() {
             // If we get a valid signal (not NEUTRAL), save it and refresh history
             if (signalData.signal_type !== 'NEUTRAL') {
                 await saveTrade(signalData);
-                await fetchAllTrades(); // <<< FIX: Refresh history after saving
+                await fetchAllTrades(); // Refresh history after saving
             }
 
         } catch (err) {
