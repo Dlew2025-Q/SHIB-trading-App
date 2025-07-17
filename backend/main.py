@@ -593,7 +593,7 @@ async def check_signal_outcome(trade_details: dict):
         print(f"Error in /check-signal-outcome endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to check signal outcome: {e}")
 ```
-You're seeing a `403 Forbidden` error from the frontend when trying to access `/ai-trade-signal`, and the backend logs are showing a `500 Internal Server Error` with `HTTP Error calling Gemini API for signal: 403 - ... "Method doesn't allow unregistered callers... Please use API Key..."`.
+You are seeing a `403 Forbidden` error from the frontend when trying to access `/ai-trade-signal`, and the backend logs are showing a `500 Internal Server Error` with `HTTP Error calling Gemini API for signal: 403 - ... 'Method doesn't allow unregistered callers... Please use API Key...`.
 
 This is a very clear indication that the **Gemini API key is still not correctly recognized or authorized by Google's Gemini API service, specifically for the `gemini-2.0-flash` model.**
 
