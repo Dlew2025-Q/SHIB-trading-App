@@ -30,11 +30,6 @@ if not GEMINI_API_KEY:
 else:
     print(f"INFO: GEMINI_API_KEY loaded (starts with: {GEMINI_API_KEY[:5]}...)")
 
-# Re-added RAPIDAPI_KEY check, as it's now used again for news
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
-if not RAPIDAPI_KEY:
-    print("WARNING: RAPIDAPI_KEY environment variable is not set! Crypto news will not work.")
-
 db_pool = None
 
 # --- Database Setup Functions ---
@@ -124,29 +119,6 @@ async def fetch_coingecko_data(url: str):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
-# --- Helper function to fetch crypto news ---
-async def fetch_crypto_news(limit: int = 5):
-    if not RAPIDAPI_KEY:
-        print("ERROR: RAPIDAPI_KEY is not set. Cannot fetch crypto news.")
-        return []
-    await asyncio.sleep(0.5)
-    news_url = f"https://coin-echo-crypto-news-aggregator-and-sentiment-analysis.p.rapidapi.com/api/news?limit={limit}"
-    headers = {
-        'x-rapidapi-host': 'coin-echo-crypto-news-aggregator-and-sentiment-analysis.p.rapidapi.com',
-        'x-rapidapi-key': RAPIDAPI_KEY
-    }
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(news_url, headers=headers, timeout=15.0)
-            response.raise_for_status()
-            data = response.json()
-            if data and isinstance(data, list):
-                return [{"title": item.get("title"), "url": item.get("article_url"), "source": item.get("source")} for item in data]
-            return []
-        except Exception as e:
-            print(f"Error fetching Crypto News: {e}")
-            return []
-
 # --- Backend Endpoints ---
 @app.get("/")
 async def read_root():
@@ -169,8 +141,9 @@ async def get_shib_prices():
 
 @app.get("/shib-historical-data")
 async def get_shib_historical_data():
-    ohlc_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/ohlc?vs_currency=usd&days=30"
-    volume_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=30"
+    # UPDATED: Changed days=30 to days=7
+    ohlc_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/ohlc?vs_currency=usd&days=7"
+    volume_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=7"
     try:
         ohlc_data = await fetch_coingecko_data(ohlc_url)
         volume_data = await fetch_coingecko_data(volume_url)
@@ -181,10 +154,17 @@ async def get_shib_historical_data():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process historical data: {e}")
 
+# NEW: Updated endpoint to use static news links (no API key needed)
 @app.get("/crypto-news/{limit}")
 async def get_crypto_news_endpoint(limit: int):
-    news_items = await fetch_crypto_news(limit)
-    return {"news": news_items}
+    news_items = [
+        {"title": "Latest Shiba Inu News", "url": "https://news.google.com/search?q=Shiba%20Inu%20coin", "source": "Google News"},
+        {"title": "Shiba Inu News on CoinDesk", "url": "https://www.coindesk.com/search?q=shiba%20inu", "source": "CoinDesk"},
+        {"title": "Shiba Inu on CoinTelegraph", "url": "https://cointelegraph.com/search?query=shiba%20inu", "source": "CoinTelegraph"},
+        {"title": "SHIB News on Decrypt", "url": "https://decrypt.co/search/shiba%20inu", "source": "Decrypt"},
+        {"title": "Today's Crypto News", "url": "https://news.google.com/search?q=cryptocurrency", "source": "Google News"}
+    ]
+    return {"news": news_items[:limit]}
 
 # --- MULTI-FACTOR AI SIGNAL ---
 @app.post("/ai-trade-signal")
