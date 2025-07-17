@@ -349,10 +349,14 @@ async def ai_trade_signal(request_body: dict):
         else:
             print(f"Fetched current sentiment score: {current_sentiment_score}")
 
-    # --- NEW, SMARTER PROMPT ---
+    # --- CONTRARIAN AI PROMPT ---
     prompt_parts = [
-        "You are an expert technical analyst for cryptocurrency. Your task is to analyze the following data for Shiba Inu (SHIB) and provide a trade signal (LONG, SHORT, or NEUTRAL).",
-        "Your analysis must be cautious and consider the possibility of corrections after strong price moves.",
+        "You are a cautious, contrarian technical analyst for cryptocurrency. Your primary strategy is mean-reversion. You look for opportunities where the price has moved too far, too fast and is likely to correct.",
+        "\n--- Core Strategy ---",
+        "1. **Identify Extremes:** Your main goal is to identify overbought or oversold conditions. A large 24-hour price change is a strong indicator of an extreme.",
+        "2. **Fade the Move:** When you see a strong price surge (e.g., > 5% in 24h), you should strongly consider a SHORT position, anticipating a pullback. Conversely, after a major drop, you look for a LONG opportunity.",
+        "3. **Patience is Key:** Do not chase momentum. If the trend is strong but not at an extreme, it is better to be NEUTRAL and wait for a clearer opportunity. Only signal LONG if the price has already pulled back to a support level. Only signal SHORT if the price is hitting a clear resistance level after a sharp rise.",
+        
         "\n--- Data Provided ---",
         f"- Current Price: ${current_price}",
         f"- 24-hour Price Change: {price_change_24h:.2f}%",
@@ -360,17 +364,14 @@ async def ai_trade_signal(request_body: dict):
     ]
 
     if sentiment_filter_enabled and current_sentiment_score is not None:
-        prompt_parts.append(f"- Current Bitcoin Sentiment Score (from SentiCrypt): {current_sentiment_score:.4f} (This is BTC sentiment, use as general market context. > 0.05 is positive, < -0.05 is negative).")
+        prompt_parts.append(f"- General Market Sentiment (BTC Score): {current_sentiment_score:.4f} (Use this to gauge overall market fear or greed, which can amplify reversals).")
     
     prompt_parts.extend([
-        "\n--- Analysis Checklist ---",
-        "1. **Trend and Momentum:** Is the overall trend clearly up, down, or sideways? Is the recent momentum sustainable or does it look like a blow-off top or exhaustion?",
-        "2. **Support and Resistance:** Based on the historical data, are there any obvious support (price floor) or resistance (price ceiling) levels near the current price?",
-        "3. **Mean Reversion:** After the recent price change, is the asset overbought (likely to pull back) or oversold (likely to bounce)? A large, fast 24h change often suggests an overbought condition.",
-        "4. **Sentiment Context:** How does the general market sentiment (from the BTC score) align with SHIB's specific price action?",
-        "\n--- Response ---",
-        "Based on your analysis, provide your response in the following strict JSON format. Your reasoning must be concise and directly reference the checklist items.",
-        "Example reasoning: 'Price is approaching strong resistance after a large run-up, suggesting an overbought condition. Recommending SHORT for a potential pullback.' or 'Price has bounced off a clear support level with positive momentum, recommending LONG.'",
+        "\n--- Your Analysis ---",
+        "Based on your contrarian, mean-reversion strategy and the data provided, provide your response in the following strict JSON format. Your reasoning must be concise and justify your signal based on the strategy.",
+        "Example SHORT reasoning: 'The price is up over 8% in 24h, indicating an overbought condition. This rally is likely unsustainable, presenting a mean-reversion SHORT opportunity.'",
+        "Example LONG reasoning: 'After a significant drop, the price is now showing signs of stabilizing at a historical support level. This presents a potential LONG opportunity for a bounce.'",
+        "Example NEUTRAL reasoning: 'The price is consolidating mid-range with no clear overbought or oversold signal. Waiting for a more extreme price movement before entering a trade.'",
     ])
     
     prompt = "\n".join(prompt_parts)
