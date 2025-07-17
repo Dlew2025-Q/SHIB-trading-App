@@ -141,7 +141,7 @@ async def get_shib_prices():
 
 @app.get("/shib-historical-data")
 async def get_shib_historical_data():
-    # UPDATED: Changed days=30 to days=7
+    # Correctly set to 7 days
     ohlc_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/ohlc?vs_currency=usd&days=7"
     volume_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=7"
     try:
@@ -154,7 +154,6 @@ async def get_shib_historical_data():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process historical data: {e}")
 
-# NEW: Updated endpoint to use static news links (no API key needed)
 @app.get("/crypto-news/{limit}")
 async def get_crypto_news_endpoint(limit: int):
     news_items = [
