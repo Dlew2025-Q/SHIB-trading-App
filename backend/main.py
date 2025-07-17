@@ -145,7 +145,7 @@ async def fetch_coingecko_data(url: str):
             print(f"Unexpected Error fetching CoinGecko data from {url}: {e}")
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
-# --- NEW: Helper function to fetch sentiment data from SentiCrypt ---
+# --- Helper function to fetch sentiment data from SentiCrypt ---
 async def fetch_senticrypt_data():
     await asyncio.sleep(0.5)
     senticrypt_url = "https://api.senticrypt.com/v2/all.json"
@@ -170,7 +170,7 @@ async def fetch_senticrypt_data():
             print(f"Unexpected Error fetching SentiCrypt data: {e}")
             return None
 
-# --- NEW: Helper function to fetch crypto news ---
+# --- Helper function to fetch crypto news ---
 async def fetch_crypto_news(limit: int = 5):
     if not RAPIDAPI_KEY:
         print("ERROR: RAPIDAPI_KEY is not set. Cannot fetch crypto news.")
@@ -336,7 +336,6 @@ async def ai_trade_signal(request_body: dict):
     current_price = request_body.get("current_price")
     price_change_24h = request_body.get("price_change_24h")
     historical_prices = request_body.get("historical_prices", [])
-    strategy_name = request_body.get("strategy_name")
     sentiment_filter_enabled = request_body.get("sentiment_filter_enabled", False)
 
     if current_price is None or not historical_prices:
@@ -350,25 +349,29 @@ async def ai_trade_signal(request_body: dict):
         else:
             print(f"Fetched current sentiment score: {current_sentiment_score}")
 
-
+    # --- NEW, SMARTER PROMPT ---
     prompt_parts = [
-        f"Analyze the recent price movements of Shiba Inu (SHIB) based on the following data:",
+        "You are an expert technical analyst for cryptocurrency. Your task is to analyze the following data for Shiba Inu (SHIB) and provide a trade signal (LONG, SHORT, or NEUTRAL).",
+        "Your analysis must be cautious and consider the possibility of corrections after strong price moves.",
+        "\n--- Data Provided ---",
         f"- Current Price: ${current_price}",
         f"- 24-hour Price Change: {price_change_24h:.2f}%",
-        f"- Last 30 daily closing prices (oldest to newest): [{', '.join(map(str, historical_prices))}]"
+        f"- Last 30 daily closing prices (oldest to newest): {json.dumps(historical_prices)}",
     ]
 
     if sentiment_filter_enabled and current_sentiment_score is not None:
-        prompt_parts.append(f"- Current Bitcoin Sentiment Score (from SentiCrypt): {current_sentiment_score} (Note: This is BTC sentiment, use as general market sentiment context).")
+        prompt_parts.append(f"- Current Bitcoin Sentiment Score (from SentiCrypt): {current_sentiment_score:.4f} (This is BTC sentiment, use as general market context. > 0.05 is positive, < -0.05 is negative).")
     
-    prompt_parts.append(f"Considering this data, and a general understanding of cryptocurrency market dynamics (e.g., momentum, volatility, potential for mean reversion), provide a trade signal.")
-    prompt_parts.append(f"Your response MUST be in the following exact JSON format:")
-    prompt_parts.append(f"{{")
-    prompt_parts.append(f"    \"signal_type\": \"LONG\" | \"SHORT\" | \"NEUTRAL\",")
-    prompt_parts.append(f"    \"reasoning\": \"A concise explanation for the signal, focusing on price action, trends, and if applicable, sentiment.\"")
-    prompt_parts.append(f"}}")
-    prompt_parts.append(f"If you recommend \"NEUTRAL\", explain why no clear opportunity is present.")
-    prompt_parts.append(f"Be concise and professional.")
+    prompt_parts.extend([
+        "\n--- Analysis Checklist ---",
+        "1. **Trend and Momentum:** Is the overall trend clearly up, down, or sideways? Is the recent momentum sustainable or does it look like a blow-off top or exhaustion?",
+        "2. **Support and Resistance:** Based on the historical data, are there any obvious support (price floor) or resistance (price ceiling) levels near the current price?",
+        "3. **Mean Reversion:** After the recent price change, is the asset overbought (likely to pull back) or oversold (likely to bounce)? A large, fast 24h change often suggests an overbought condition.",
+        "4. **Sentiment Context:** How does the general market sentiment (from the BTC score) align with SHIB's specific price action?",
+        "\n--- Response ---",
+        "Based on your analysis, provide your response in the following strict JSON format. Your reasoning must be concise and directly reference the checklist items.",
+        "Example reasoning: 'Price is approaching strong resistance after a large run-up, suggesting an overbought condition. Recommending SHORT for a potential pullback.' or 'Price has bounced off a clear support level with positive momentum, recommending LONG.'",
+    ])
     
     prompt = "\n".join(prompt_parts)
 
