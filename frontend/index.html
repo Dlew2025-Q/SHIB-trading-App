@@ -86,10 +86,25 @@
             </div>
         </div>
 
-        <!-- Performance and News -->
+        <!-- Performance, News, and Strategy Review -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             <div id="performance-panel" class="card p-6"></div>
-            <div id="news-panel" class="card p-6 lg:col-span-2"></div>
+            <div class="lg:col-span-2 flex flex-col gap-6">
+                <div id="news-panel" class="card p-6 flex-grow"></div>
+                <!-- NEW: AI Strategy Review Panel -->
+                <div id="review-panel" class="card p-6">
+                    <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
+                        <i data-lucide="search" class="mr-2 text-indigo-400"></i>
+                        AI Performance Review
+                    </h3>
+                    <div id="review-content" class="text-gray-300 space-y-4">
+                        <p class="text-sm italic">Click the button to have the AI analyze its recent performance and suggest strategy improvements.</p>
+                    </div>
+                    <button id="analyze-btn" class="w-full mt-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800/50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center">
+                        <span id="analyze-btn-text">Analyze & Suggest Improvements</span>
+                    </button>
+                </div>
+            </div>
         </div>
 
         <!-- Signal History Table -->
@@ -150,6 +165,9 @@
             const findTradeBtn = document.getElementById('find-trade-btn');
             const refreshBtn = document.getElementById('refresh-results-btn');
             const refreshBtnText = document.getElementById('refresh-btn-text');
+            const analyzeBtn = document.getElementById('analyze-btn');
+            const analyzeBtnText = document.getElementById('analyze-btn-text');
+            const reviewContent = document.getElementById('review-content');
             const errorBanner = document.getElementById('error-banner');
             const errorMessage = document.getElementById('error-message');
 
@@ -165,6 +183,7 @@
                 historyTableBody.innerHTML = `<tr><td colspan="7" class="p-4"><div class="h-8 pulse bg-gray-700 rounded-md"></div></td></tr>`;
                 findTradeBtn.disabled = true;
                 refreshBtn.disabled = true;
+                analyzeBtn.disabled = true;
             };
 
             const updateStats = (data) => {
@@ -175,112 +194,46 @@
                 const volume = data.total_volume ? `$${(data.total_volume / 1e6).toFixed(2)}M` : 'N/A';
                 const isPositive = data.price_change_24h > 0;
 
-                priceCard.innerHTML = `
-                    <div class="flex items-center justify-between mb-2">
-                        <p class="text-sm text-gray-400">Current Price</p>
-                        <i data-lucide="trending-up" class="text-green-400"></i>
-                    </div>
-                    <h3 class="text-2xl md:text-3xl font-bold text-white">${price}</h3>`;
-                
-                changeCard.innerHTML = `
-                    <div class="flex items-center justify-between mb-2">
-                        <p class="text-sm text-gray-400">24h Change</p>
-                        <i data-lucide="${isPositive ? 'arrow-up' : 'arrow-down'}" class="${isPositive ? 'text-green-400' : 'text-red-400'}"></i>
-                    </div>
-                    <h3 class="text-2xl md:text-3xl font-bold text-white">${change}</h3>`;
-
-                marketCapCard.innerHTML = `
-                     <div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">Market Cap</p></div>
-                     <h3 class="text-2xl md:text-3xl font-bold text-white">${marketCap}</h3>`;
-
-                volumeCard.innerHTML = `
-                     <div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h Volume</p></div>
-                     <h3 class="text-2xl md:text-3xl font-bold text-white">${volume}</h3>`;
+                priceCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">Current Price</p><i data-lucide="trending-up" class="text-green-400"></i></div><h3 class="text-2xl md:text-3xl font-bold text-white">${price}</h3>`;
+                changeCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h Change</p><i data-lucide="${isPositive ? 'arrow-up' : 'arrow-down'}" class="${isPositive ? 'text-green-400' : 'text-red-400'}"></i></div><h3 class="text-2xl md:text-3xl font-bold text-white">${change}</h3>`;
+                marketCapCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">Market Cap</p></div><h3 class="text-2xl md:text-3xl font-bold text-white">${marketCap}</h3>`;
+                volumeCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h Volume</p></div><h3 class="text-2xl md:text-3xl font-bold text-white">${volume}</h3>`;
             };
 
             const updateChart = (data) => {
                 historicalData = data;
-                const closingPrices = data.ohlc.map(d => d[4]); // Use closing price for the line chart
+                const closingPrices = data.ohlc.map(d => d[4]);
                 const labels = data.ohlc.map(d => new Date(d[0]).toLocaleDateString());
-
                 const ctx = document.getElementById('priceChart').getContext('2d');
-                if (priceChart) {
-                    priceChart.destroy();
-                }
+                if (priceChart) priceChart.destroy();
                 priceChart = new Chart(ctx, {
                     type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: 'SHIB Price (USD)',
-                            data: closingPrices,
-                            borderColor: 'rgba(99, 102, 241, 1)',
-                            backgroundColor: 'rgba(99, 102, 241, 0.2)',
-                            fill: true,
-                            tension: 0.4,
-                            pointRadius: 0,
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
-                        scales: {
-                            x: { display: false },
-                            y: { ticks: { callback: (value) => `$${value.toFixed(8)}`, color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
-                        }
-                    }
+                    data: { labels, datasets: [{ label: 'SHIB Price (USD)', data: closingPrices, borderColor: 'rgba(99, 102, 241, 1)', backgroundColor: 'rgba(99, 102, 241, 0.2)', fill: true, tension: 0.4, pointRadius: 0 }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { ticks: { callback: (value) => `$${value.toFixed(8)}`, color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } } }
                 });
             };
             
-            const updateSignal = (signal, reasoning, sentimentScore) => {
+            const updateSignal = (signal, reasoning) => {
                  let colorClass = 'bg-yellow-500/20 text-yellow-400';
                  let icon = 'help-circle';
-                 if (signal === 'LONG') {
-                     colorClass = 'bg-green-500/20 text-green-400';
-                     icon = 'trending-up';
-                 } else if (signal === 'SHORT') {
-                     colorClass = 'bg-red-500/20 text-red-400';
-                     icon = 'arrow-down';
-                 }
-                 
-                 let sentimentHTML = sentimentScore !== null && sentimentScore !== undefined 
-                    ? `<p class="text-xs text-gray-500 mt-3">Sentiment Score Used: ${sentimentScore.toFixed(4)}</p>` 
-                    : '';
-
-                 signalDisplay.innerHTML = `
-                    <h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="brain-circuit" class="mr-2 text-indigo-400"></i> AI Trade Signal</h3>
-                    <div class="text-center">
-                        <div class="inline-flex items-center justify-center px-6 py-3 rounded-full text-2xl font-bold mb-4 ${colorClass}">
-                            <i data-lucide="${icon}" class="mr-2"></i> ${signal}
-                        </div>
-                        <p class="text-gray-300 text-sm italic px-4">${reasoning}</p>
-                        ${sentimentHTML}
-                    </div>`;
+                 if (signal === 'LONG') { colorClass = 'bg-green-500/20 text-green-400'; icon = 'trending-up'; } 
+                 else if (signal === 'SHORT') { colorClass = 'bg-red-500/20 text-red-400'; icon = 'arrow-down'; }
+                 signalDisplay.innerHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="brain-circuit" class="mr-2 text-indigo-400"></i> AI Trade Signal</h3><div class="text-center"><div class="inline-flex items-center justify-center px-6 py-3 rounded-full text-2xl font-bold mb-4 ${colorClass}"><i data-lucide="${icon}" class="mr-2"></i> ${signal}</div><p class="text-gray-300 text-sm italic px-4">${reasoning}</p></div>`;
             };
 
             const updatePerformance = (trades) => {
                 const totalTrades = trades.length;
                 const wins = trades.filter(t => t.status === 'win').length;
                 const accuracy = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : "0.0";
-                performancePanel.innerHTML = `
-                    <h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="bar-chart" class="mr-2 text-indigo-400"></i> Performance</h3>
-                    <div class="grid grid-cols-2 gap-4 text-center">
-                        <div><p class="text-3xl font-bold text-white">${totalTrades}</p><p class="text-sm text-gray-400">Total Signals</p></div>
-                        <div><p class="text-3xl font-bold text-green-400">${accuracy}%</p><p class="text-sm text-gray-400">Accuracy</p></div>
-                    </div>`;
+                performancePanel.innerHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="bar-chart" class="mr-2 text-indigo-400"></i> Performance</h3><div class="grid grid-cols-2 gap-4 text-center"><div><p class="text-3xl font-bold text-white">${totalTrades}</p><p class="text-sm text-gray-400">Total Signals</p></div><div><p class="text-3xl font-bold text-green-400">${accuracy}%</p><p class="text-sm text-gray-400">Accuracy</p></div></div>`;
             };
 
             const updateNews = (news) => {
                 let newsHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="rss" class="mr-2 text-indigo-400"></i> Latest Crypto News</h3>`;
                 if (news.length > 0) {
-                    newsHTML += '<div class="space-y-4 max-h-96 overflow-y-auto pr-2">';
+                    newsHTML += '<div class="space-y-4 max-h-48 overflow-y-auto pr-2">';
                     news.forEach(item => {
-                        newsHTML += `
-                            <a href="${item.url}" target="_blank" rel="noopener noreferrer" class="block p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-colors">
-                                <p class="font-semibold text-sm text-gray-200 truncate">${item.title}</p>
-                                <p class="text-xs text-gray-400">${item.source}</p>
-                            </a>`;
+                        newsHTML += `<a href="${item.url}" target="_blank" rel="noopener noreferrer" class="block p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-colors"><p class="font-semibold text-sm text-gray-200 truncate">${item.title}</p><p class="text-xs text-gray-400">${item.source}</p></a>`;
                     });
                     newsHTML += '</div>';
                 } else {
@@ -290,47 +243,23 @@
             };
 
             const updateHistoryTable = (trades) => {
-                allTrades = trades; // Store the latest trades globally
+                allTrades = trades;
                 if (trades.length === 0) {
                     historyTableBody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-gray-500">No trade history yet.</td></tr>`;
                     return;
                 }
                 let tableHTML = '';
                 trades.slice(0, 10).forEach(trade => {
-                    let statusIcon = 'minus-circle';
-                    let statusColor = 'text-gray-500';
+                    let statusIcon = 'minus-circle', statusColor = 'text-gray-500';
                     if (trade.status === 'win') { statusIcon = 'check-circle'; statusColor = 'text-green-500'; }
                     if (trade.status === 'loss') { statusIcon = 'x-circle'; statusColor = 'text-red-500'; }
                     if (trade.status === 'pending') { statusIcon = 'clock'; statusColor = 'text-yellow-500'; }
                     
                     const entry = trade.entry_price;
                     const exit = trade.take_profit_price;
-                    let profitPct = 0;
-                    if (entry > 0) {
-                        if (trade.signal_type === 'LONG') {
-                            profitPct = ((exit - entry) / entry) * 100;
-                        } else { // SHORT
-                            profitPct = ((entry - exit) / entry) * 100;
-                        }
-                    }
+                    let profitPct = (entry > 0) ? (((trade.signal_type === 'LONG' ? exit - entry : entry - exit) / entry) * 100) : 0;
 
-                    tableHTML += `
-                        <tr class="border-b border-gray-700 hover:bg-gray-700/30">
-                            <td class="px-4 py-4 font-medium whitespace-nowrap">${new Date(trade.timestamp).toLocaleString()}</td>
-                            <td class="px-4 py-4">
-                                <span class="px-2 py-1 rounded-full text-xs font-semibold ${trade.signal_type === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${trade.signal_type}</span>
-                            </td>
-                            <td class="px-4 py-4">$${entry.toFixed(8)}</td>
-                            <td class="px-4 py-4">$${exit.toFixed(8)}</td>
-                            <td class="px-4 py-4 font-semibold ${profitPct >= 0 ? 'text-green-400' : 'text-red-400'}">${profitPct.toFixed(2)}%</td>
-                            <td class="px-4 py-4">
-                                <div class="flex items-center space-x-2 ${statusColor}">
-                                    <i data-lucide="${statusIcon}"></i>
-                                    <span class="capitalize">${trade.status}</span>
-                                </div>
-                            </td>
-                            <td class="px-4 py-4 text-gray-400 italic max-w-xs truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning}</td>
-                        </tr>`;
+                    tableHTML += `<tr class="border-b border-gray-700 hover:bg-gray-700/30"><td class="px-4 py-4 font-medium whitespace-nowrap">${new Date(trade.timestamp).toLocaleString()}</td><td class="px-4 py-4"><span class="px-2 py-1 rounded-full text-xs font-semibold ${trade.signal_type === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${trade.signal_type}</span></td><td class="px-4 py-4">$${entry.toFixed(8)}</td><td class="px-4 py-4">$${exit.toFixed(8)}</td><td class="px-4 py-4 font-semibold ${profitPct >= 0 ? 'text-green-400' : 'text-red-400'}">${profitPct.toFixed(2)}%</td><td class="px-4 py-4"><div class="flex items-center space-x-2 ${statusColor}"><i data-lucide="${statusIcon}"></i><span class="capitalize">${trade.status}</span></div></td><td class="px-4 py-4 text-gray-400 italic max-w-xs truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning}</td></tr>`;
                 });
                 historyTableBody.innerHTML = tableHTML;
             };
@@ -340,7 +269,6 @@
                 errorBanner.classList.remove('hidden');
             };
 
-            // --- API Calls ---
             const fetchAllTrades = async () => {
                 try {
                     const res = await fetch(`${API_BASE_URL}/get-all-trades`);
@@ -348,10 +276,7 @@
                     const data = await res.json();
                     updatePerformance(data.trades || []);
                     updateHistoryTable(data.trades || []);
-                } catch (err) {
-                    console.error("Fetch Trades Error:", err);
-                    showError(err.message);
-                }
+                } catch (err) { showError(err.message); }
             };
 
             const fetchInitialData = async () => {
@@ -370,79 +295,54 @@
                     
                     updateStats(pricesData);
                     updateChart(historyData);
-                    updateSignal('NEUTRAL', 'Click "Find Next Trade" to get an AI analysis.', null);
+                    updateSignal('NEUTRAL', 'Click "Find Next Trade" to get an AI analysis.');
 
-                    if (newsRes.ok) {
-                        updateNews(await newsRes.json().then(d => d.news || []));
-                    } else {
-                        updateNews([]);
-                    }
+                    if (newsRes.ok) updateNews(await newsRes.json().then(d => d.news || []));
+                    else updateNews([]);
                     
                     await fetchAllTrades();
-
-                } catch (err) {
-                    console.error("Fetch Data Error:", err);
-                    showError(err.message);
-                } finally {
+                } catch (err) { showError(err.message); } 
+                finally {
                     findTradeBtn.disabled = false;
                     refreshBtn.disabled = false;
+                    analyzeBtn.disabled = false;
                     lucide.createIcons();
                 }
             };
 
             findTradeBtn.addEventListener('click', async () => {
-                if (!shibData.current_price) {
-                    alert("Market data not loaded yet. Please wait.");
-                    return;
-                }
+                if (!shibData.current_price) return alert("Market data not loaded yet.");
                 findTradeBtn.disabled = true;
                 findTradeBtn.innerHTML = 'Analyzing...';
                 errorBanner.classList.add('hidden');
-
                 try {
-                    const requestBody = {
-                        current_price: shibData.current_price,
-                        historical_ohlc: historicalData.ohlc,
-                        historical_volumes: historicalData.volumes
-                    };
-
                     const res = await fetch(`${API_BASE_URL}/ai-trade-signal`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(requestBody),
+                        body: JSON.stringify({ current_price: shibData.current_price, historical_ohlc: historicalData.ohlc, historical_volumes: historicalData.volumes }),
                     });
-
-                    if (!res.ok) {
-                        const errData = await res.json();
-                        throw new Error(errData.detail || `AI Signal Error: ${res.statusText}`);
-                    }
-
+                    if (!res.ok) throw new Error(await res.json().then(d => d.detail || res.statusText));
                     const signalData = await res.json();
-                    updateSignal(signalData.signal_type, signalData.reasoning, null);
+                    updateSignal(signalData.signal_type, signalData.reasoning);
 
                     if (signalData.signal_type !== 'NEUTRAL') {
                         const trade = {
                             id: Date.now(),
                             signalType: signalData.signal_type,
                             entryPrice: shibData.current_price,
-                            takeProfitPrice: signalData.take_profit_price, // Use AI-generated TP
-                            stopLossPrice: signalData.stop_loss_price,     // Use AI-generated SL
+                            takeProfitPrice: signalData.take_profit_price,
+                            stopLossPrice: signalData.stop_loss_price,
                             positionSize: 1000,
                             status: 'pending',
                             timestamp: Date.now(),
                             aiReasoning: signalData.reasoning,
                         };
-                        await fetch(`${API_BASE_URL}/save-trade`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(trade),
-                        });
-                        await fetchAllTrades(); // Refresh history after saving
+                        await fetch(`${API_BASE_URL}/save-trade`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(trade) });
+                        await fetchAllTrades();
                     }
                 } catch (err) {
-                    console.error("Find Trade Error:", err);
                     showError(err.message);
-                    updateSignal('ERROR', `Failed to get signal: ${err.message}`, null);
+                    updateSignal('ERROR', `Failed to get signal: ${err.message}`);
                 } finally {
                     findTradeBtn.disabled = false;
                     findTradeBtn.innerHTML = 'Find Next Trade';
@@ -463,27 +363,14 @@
                     if (refreshIcon) refreshIcon.classList.remove('animate-spin');
                     return;
                 }
-
                 try {
-                    const checkPromises = pendingTrades.map(trade => 
-                        fetch(`${API_BASE_URL}/check-signal-outcome`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                // Map frontend snake_case to backend camelCase if needed, but backend expects snake_case now
-                                id: trade.id,
-                                entry_price: trade.entry_price,
-                                take_profit_price: trade.take_profit_price,
-                                stop_loss_price: trade.stop_loss_price,
-                                signal_type: trade.signal_type,
-                                timestamp: trade.timestamp
-                            }),
-                        })
-                    );
+                    const checkPromises = pendingTrades.map(trade => fetch(`${API_BASE_URL}/check-signal-outcome`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(trade),
+                    }));
                     await Promise.all(checkPromises);
-                } catch (err) {
-                    showError("An error occurred while refreshing results.");
-                } finally {
+                } catch (err) { showError("An error occurred while refreshing results."); }
+                finally {
                     await fetchAllTrades();
                     refreshBtn.disabled = false;
                     refreshBtnText.textContent = 'Refresh Results';
@@ -492,7 +379,39 @@
                 }
             };
 
+            const analyzeStrategy = async () => {
+                if (allTrades.length === 0) return alert("No trade history to analyze.");
+                analyzeBtn.disabled = true;
+                analyzeBtnText.textContent = 'AI is Analyzing...';
+                reviewContent.innerHTML = `<div class="h-24 pulse bg-gray-700 rounded-md"></div>`;
+                try {
+                    const res = await fetch(`${API_BASE_URL}/ai-strategy-review`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(allTrades.slice(0, 20)) // Send last 20 trades for review
+                    });
+                    if (!res.ok) throw new Error(await res.json().then(d => d.detail || 'Failed to get analysis.'));
+                    const review = await res.json();
+                    reviewContent.innerHTML = `
+                        <div class="space-y-3">
+                            <div>
+                                <h4 class="font-semibold text-gray-100">Observations:</h4>
+                                <p class="text-sm text-gray-300">${review.observations}</p>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-100">Recommendations:</h4>
+                                <p class="text-sm text-gray-300">${review.recommendations}</p>
+                            </div>
+                        </div>`;
+                } catch(err) {
+                    reviewContent.innerHTML = `<p class="text-red-400">Error: ${err.message}</p>`;
+                } finally {
+                    analyzeBtn.disabled = false;
+                    analyzeBtnText.textContent = 'Analyze & Suggest Improvements';
+                }
+            };
+
             refreshBtn.addEventListener('click', checkPendingTrades);
+            analyzeBtn.addEventListener('click', analyzeStrategy);
 
             // --- Initial Load ---
             fetchInitialData();
