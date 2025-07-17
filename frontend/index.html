@@ -104,6 +104,8 @@
                             <th scope="col" class="px-4 py-3">Date</th>
                             <th scope="col" class="px-4 py-3">Type</th>
                             <th scope="col" class="px-4 py-3">Entry Price</th>
+                            <th scope="col" class="px-4 py-3">Planned Exit</th>
+                            <th scope="col" class="px-4 py-3">Profit %</th>
                             <th scope="col" class="px-4 py-3">Status</th>
                             <th scope="col" class="px-4 py-3">AI Reasoning</th>
                         </tr>
@@ -153,7 +155,7 @@
                 signalDisplay.innerHTML = `<div class="h-32 pulse bg-gray-700 rounded-md"></div>`;
                 performancePanel.innerHTML = `<div class="h-24 pulse bg-gray-700 rounded-md"></div>`;
                 newsPanel.innerHTML = `<div class="h-48 pulse bg-gray-700 rounded-md"></div>`;
-                historyTableBody.innerHTML = `<tr><td colspan="5" class="p-4"><div class="h-8 pulse bg-gray-700 rounded-md"></div></td></tr>`;
+                historyTableBody.innerHTML = `<tr><td colspan="7" class="p-4"><div class="h-8 pulse bg-gray-700 rounded-md"></div></td></tr>`;
                 findTradeBtn.disabled = true;
                 refreshBtn.disabled = true;
             };
@@ -280,7 +282,7 @@
             const updateHistoryTable = (trades) => {
                 allTrades = trades; // Store the latest trades globally
                 if (trades.length === 0) {
-                    historyTableBody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-gray-500">No trade history yet.</td></tr>`;
+                    historyTableBody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-gray-500">No trade history yet.</td></tr>`;
                     return;
                 }
                 let tableHTML = '';
@@ -291,6 +293,17 @@
                     if (trade.status === 'loss') { statusIcon = 'x-circle'; statusColor = 'text-red-500'; }
                     if (trade.status === 'pending') { statusIcon = 'clock'; statusColor = 'text-yellow-500'; }
                     
+                    const entry = trade.entryPrice;
+                    const exit = trade.takeProfitPrice;
+                    let profitPct = 0;
+                    if (entry > 0) {
+                        if (trade.signalType === 'LONG') {
+                            profitPct = ((exit - entry) / entry) * 100;
+                        } else { // SHORT
+                            profitPct = ((entry - exit) / entry) * 100;
+                        }
+                    }
+
                     tableHTML += `
                         <tr class="border-b border-gray-700 hover:bg-gray-700/30">
                             <td class="px-4 py-4 font-medium whitespace-nowrap">${new Date(trade.timestamp).toLocaleString()}</td>
@@ -298,6 +311,8 @@
                                 <span class="px-2 py-1 rounded-full text-xs font-semibold ${trade.signalType === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${trade.signalType}</span>
                             </td>
                             <td class="px-4 py-4">$${trade.entryPrice.toFixed(8)}</td>
+                            <td class="px-4 py-4">$${trade.takeProfitPrice.toFixed(8)}</td>
+                            <td class="px-4 py-4 font-semibold ${profitPct >= 0 ? 'text-green-400' : 'text-red-400'}">${profitPct.toFixed(2)}%</td>
                             <td class="px-4 py-4">
                                 <div class="flex items-center space-x-2 ${statusColor}">
                                     <i data-lucide="${statusIcon}"></i>
