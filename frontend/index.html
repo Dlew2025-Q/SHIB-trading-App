@@ -300,9 +300,10 @@ export default function App() {
                 sentimentScore: signalData.sentiment_score
             });
 
+            // If we get a valid signal (not NEUTRAL), save it and refresh history
             if (signalData.signal_type !== 'NEUTRAL') {
                 await saveTrade(signalData);
-                await fetchAllTrades(); // Refresh history
+                await fetchAllTrades(); // <<< FIX: Refresh history after saving
             }
 
         } catch (err) {
@@ -331,11 +332,14 @@ export default function App() {
         };
 
         try {
-            await fetch(`${API_BASE_URL}/save-trade`, {
+            const res = await fetch(`${API_BASE_URL}/save-trade`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(trade),
             });
+            if (!res.ok) {
+                console.error("Failed to save trade:", await res.text());
+            }
         } catch (err) {
             console.error("Failed to save trade:", err);
         }
