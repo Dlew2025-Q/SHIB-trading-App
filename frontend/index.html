@@ -73,7 +73,7 @@
         <!-- Main Content: Chart and AI Signal -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             <div class="lg:col-span-2 card p-4 md:p-6">
-                <h3 class="text-lg font-semibold text-white mb-4">30-Day Price Chart</h3>
+                <h3 class="text-lg font-semibold text-white mb-4">7-Day Price Chart</h3>
                 <div class="h-80">
                     <canvas id="priceChart"></canvas>
                 </div>
@@ -91,7 +91,6 @@
             <div id="performance-panel" class="card p-6"></div>
             <div class="lg:col-span-2 flex flex-col gap-6">
                 <div id="news-panel" class="card p-6 flex-grow"></div>
-                <!-- NEW: AI Strategy Review Panel -->
                 <div id="review-panel" class="card p-6">
                     <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
                         <i data-lucide="search" class="mr-2 text-indigo-400"></i>
@@ -150,7 +149,7 @@
             const API_BASE_URL = "https://shib-trading-app.onrender.com";
             let priceChart = null;
             let shibData = {};
-            let historicalData = { ohlc: [], volumes: [] }; // NEW: Updated data structure
+            let historicalData = { ohlc: [], volumes: [] };
             let allTrades = [];
 
             // --- UI Elements ---
@@ -237,7 +236,7 @@
                     });
                     newsHTML += '</div>';
                 } else {
-                    newsHTML += `<p class="text-gray-400 text-center py-8">Could not load news. API key may be missing.</p>`;
+                    newsHTML += `<p class="text-gray-400 text-center py-8">Could not load news.</p>`;
                 }
                 newsPanel.innerHTML = newsHTML;
             };
