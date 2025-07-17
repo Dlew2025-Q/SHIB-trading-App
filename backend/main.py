@@ -1,420 +1,390 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SHIB Trading AI Dashboard</title>
-    <!-- Tailwind CSS for styling -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js for the price chart -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-    <!-- Lucide Icons for UI icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        body {
-            background-color: #111827; /* bg-gray-900 */
-            color: #f9fafb; /* text-gray-50 */
-            font-family: 'Inter', sans-serif;
+# backend/main.py
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
+import os
+import asyncio
+import asyncpg
+import json
+from datetime import datetime, timedelta
+import numpy as np
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://shib-trading-app-front-end.onrender.com"], # Use your specific frontend URL here
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
+if not COINGECKO_API_KEY:
+    print("WARNING: COINGECKO_API_KEY environment variable is not set!")
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+if not GEMINI_API_KEY:
+    print("WARNING: GEMINI_API_KEY environment variable is not set!")
+else:
+    print(f"INFO: GEMINI_API_KEY loaded (starts with: {GEMINI_API_KEY[:5]}...)")
+
+db_pool = None
+
+# --- Database Setup Functions ---
+async def connect_to_db():
+    global db_pool
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        print("ERROR: DATABASE_URL environment variable is NOT SET! Database connection will fail.")
+        db_pool = None
+        return
+
+    try:
+        print(f"Attempting to connect to database using URL: {DATABASE_URL[:30]}...")
+        db_pool = await asyncpg.create_pool(DATABASE_URL, timeout=10)
+        print("Successfully connected to PostgreSQL database pool.")
+        await create_trades_table()
+    except Exception as e:
+        print(f"CRITICAL ERROR: Could not connect to or initialize database: {e}")
+        db_pool = None
+        raise
+
+async def disconnect_from_db():
+    global db_pool
+    if db_pool:
+        await db_pool.close()
+        print("Disconnected from PostgreSQL database.")
+
+async def create_trades_table():
+    if not db_pool:
+        print("WARNING: Skipping create_trades_table as db_pool is not established.")
+        return
+
+    async with db_pool.acquire() as conn:
+        try:
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS simulated_trades (
+                    id BIGINT PRIMARY KEY,
+                    signal_type VARCHAR(10) NOT NULL,
+                    entry_price NUMERIC(20, 8) NOT NULL,
+                    take_profit_price NUMERIC(20, 8) NOT NULL,
+                    stop_loss_price NUMERIC(20, 8) NOT NULL,
+                    position_size NUMERIC(20, 8) NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    outcome_price NUMERIC(20, 8),
+                    profit_loss NUMERIC(20, 8),
+                    timestamp BIGINT NOT NULL,
+                    ai_reasoning TEXT,
+                    sentiment_score NUMERIC(10, 8)
+                );
+            ''')
+            print("simulated_trades table checked/created with full schema.")
+        except Exception as e:
+            print(f"CRITICAL ERROR: Could not create/update simulated_trades table schema: {e}")
+            raise
+
+# --- FastAPI Lifecycle Events (connect/disconnect DB) ---
+@app.on_event("startup")
+async def startup_event():
+    print("Application startup event triggered.")
+    try:
+        await connect_to_db()
+        print("Startup: Database connection attempt completed.")
+    except Exception as e:
+        print(f"FATAL ERROR during application startup: {e}")
+        raise
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    print("Application shutdown event triggered.")
+    await disconnect_from_db()
+
+# --- Helper function to make CoinGecko API calls ---
+async def fetch_coingecko_data(url: str):
+    await asyncio.sleep(0.5)
+    headers = {}
+    if COINGECKO_API_KEY:
+        headers["x-cg-demo-api-key"] = COINGECKO_API_KEY
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers, timeout=10.0)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=f"CoinGecko API error: {e.response.text}")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail=f"Network error fetching CoinGecko data: {e}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
+
+# --- Backend Endpoints ---
+@app.get("/")
+async def read_root():
+    return {"message": "Welcome to the SHIB Trading Analysis Backend API!"}
+
+@app.get("/shib-prices")
+async def get_shib_prices():
+    market_data_url = 'https://api.coingecko.com/api/v3/coins/shiba-inu?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false'
+    try:
+        data = await fetch_coingecko_data(market_data_url)
+        market_data = data.get('market_data', {})
+        return {
+            "current_price": market_data.get('current_price', {}).get('usd'),
+            "price_change_24h": market_data.get('price_change_percentage_24h'),
+            "market_cap": market_data.get('market_cap', {}).get('usd'),
+            "total_volume": market_data.get('total_volume', {}).get('usd'),
         }
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        .card {
-            background-color: #1f2937; /* bg-gray-800 */
-            border: 1px solid #374151; /* border-gray-700 */
-            border-radius: 1rem; /* rounded-2xl */
-            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-            transition: transform 0.3s;
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process SHIB prices: {e}")
+
+@app.get("/shib-historical-data")
+async def get_shib_historical_data():
+    ohlc_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/ohlc?vs_currency=usd&days=30"
+    volume_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=30"
+    try:
+        ohlc_data = await fetch_coingecko_data(ohlc_url)
+        volume_data = await fetch_coingecko_data(volume_url)
+        return {
+            "ohlc": ohlc_data,
+            "volumes": volume_data.get('total_volumes', [])
         }
-        .card:hover {
-            transform: scale(1.05);
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process historical data: {e}")
+
+@app.get("/crypto-news/{limit}")
+async def get_crypto_news_endpoint(limit: int):
+    news_items = [
+        {"title": "Latest Shiba Inu News", "url": "https://news.google.com/search?q=Shiba%20Inu%20coin", "source": "Google News"},
+        {"title": "Shiba Inu News on CoinDesk", "url": "https://www.coindesk.com/search?q=shiba%20inu", "source": "CoinDesk"},
+        {"title": "Shiba Inu on CoinTelegraph", "url": "https://cointelegraph.com/search?query=shiba%20inu", "source": "CoinTelegraph"},
+        {"title": "SHIB News on Decrypt", "url": "https://decrypt.co/search/shiba%20inu", "source": "Decrypt"},
+        {"title": "Today's Crypto News", "url": "https://news.google.com/search?q=cryptocurrency", "source": "Google News"}
+    ]
+    return {"news": news_items[:limit]}
+
+# --- CONTRARIAN AI SIGNAL ---
+@app.post("/ai-trade-signal")
+async def ai_trade_signal(request_body: dict):
+    current_price = request_body.get("current_price")
+    historical_ohlc = request_body.get("historical_ohlc", [])
+    historical_volumes = request_body.get("historical_volumes", [])
+
+    if not all([current_price, historical_ohlc, historical_volumes]):
+        raise HTTPException(status_code=400, detail="Missing required data for AI signal.")
+
+    def calculate_sma(series, period):
+        if len(series) < period: return None
+        return sum(series[-period:]) / period
+
+    def calculate_atr(ohlc_data, period=14):
+        if len(ohlc_data) < period + 1: return None
+        true_ranges = [max(d[2] - d[3], abs(d[2] - ohlc_data[i-1][4]), abs(d[3] - ohlc_data[i-1][4])) for i, d in enumerate(ohlc_data) if i > 0]
+        if not true_ranges: return None
+        return np.mean(true_ranges[-period:])
+
+    closing_prices = [d[4] for d in historical_ohlc]
+    volumes = [v[1] for v in historical_volumes]
+    
+    price_sma_10 = calculate_sma(closing_prices, 10)
+    volume_sma_10 = calculate_sma(volumes, 10)
+    atr_14 = calculate_atr(historical_ohlc, 14)
+
+    if not all([price_sma_10, volume_sma_10, atr_14]):
+        raise HTTPException(status_code=500, detail="Could not calculate necessary technical indicators.")
+
+    yesterday_ohlc = historical_ohlc[-1]
+    yesterday_open, yesterday_close, yesterday_volume = yesterday_ohlc[1], yesterday_ohlc[4], volumes[-1]
+
+    prompt_parts = [
+        "You are a contrarian trading analyst. Your task is to first evaluate a simple momentum strategy, and if it generates a signal, you will INVERT it for the final output.",
+        "\n--- Original Momentum Strategy Rules (for evaluation only) ---",
+        "1. **Regime Filter:** LONG if Price > 10-Day SMA; SHORT if Price < 10-Day SMA.",
+        "2. **Volume Confirmation:** Signal only if Previous Day's Volume > 10-Day Volume SMA.",
+        "3. **Entry Signal:** Previous Green Candle (Close > Open) for LONG; Previous Red Candle for SHORT.",
+        
+        "\n--- Your Contrarian Logic ---",
+        "1. **Evaluate Original Signal:** First, determine if the original momentum strategy would generate a LONG or SHORT signal based on the rules above.",
+        "2. **INVERT THE SIGNAL:** If the original signal is LONG, your final output MUST be SHORT. If the original signal is SHORT, your final output MUST be LONG.",
+        "3. **Handle NEUTRAL:** If the original strategy's conditions are not met, the final signal remains NEUTRAL.",
+        "4. **Calculate Inverted Exits:** The Take-Profit and Stop-Loss must be calculated for the INVERTED signal, using the provided ATR.",
+        "   - For a final SHORT signal: TP = Entry - (1.5 * ATR), SL = Entry + (1.0 * ATR)",
+        "   - For a final LONG signal: TP = Entry + (1.5 * ATR), SL = Entry - (1.0 * ATR)",
+        "5. **Reasoning:** Your reasoning must explain why the original signal was triggered and that you are inverting it based on the contrarian strategy.",
+
+        "\n--- Data Provided for Analysis ---",
+        f"- Current Price (for Entry): ${current_price}",
+        f"- Previous Day's Open: ${yesterday_open}",
+        f"- Previous Day's Close: ${yesterday_close}",
+        f"- Previous Day's Volume: {yesterday_volume:,.0f}",
+        f"- 10-Day Price SMA: ${price_sma_10:.8f}",
+        f"- 10-Day Volume SMA: {volume_sma_10:,.0f}",
+        f"- 14-Day ATR: ${atr_14:.8f}",
+        
+        "\n--- Your Task ---",
+        "Follow the contrarian logic to generate the final inverted signal and its corresponding exit prices. Provide your response in the following strict JSON format.",
+    ]
+    
+    prompt = "\n".join(prompt_parts)
+    
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "signal_type": {"type": "STRING", "enum": ["LONG", "SHORT", "NEUTRAL"]},
+                    "reasoning": {"type": "STRING"},
+                    "take_profit_price": {"type": "NUMBER"},
+                    "stop_loss_price": {"type": "NUMBER"}
+                }, "required": ["signal_type", "reasoning"]
+            }
         }
-        .pulse {
-            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    
+    gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(gemini_api_url, json=payload, timeout=45.0)
+            response.raise_for_status()
+            result = response.json()
+        ai_response_text = result['candidates'][0]['content']['parts'][0]['text']
+        return json.loads(ai_response_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI signal generation: {e}")
+
+@app.post("/ai-strategy-review")
+async def ai_strategy_review(trades: list[dict]):
+    if not trades:
+        raise HTTPException(status_code=400, detail="No trade history provided for review.")
+
+    formatted_trades = []
+    for trade in trades:
+        signal_type = trade.get('signal_type', trade.get('signalType'))
+        ai_reasoning = trade.get('ai_reasoning', trade.get('aiReasoning'))
+        
+        formatted_trades.append(
+            f"- Date: {datetime.fromtimestamp(trade['timestamp']/1000).strftime('%Y-%m-%d')}, "
+            f"Type: {signal_type}, Status: {trade['status']}, "
+            f"Reasoning: '{ai_reasoning}'"
+        )
+    trade_history_str = "\n".join(formatted_trades)
+
+    prompt_parts = [
+        "You are an expert quantitative trading strategist. Your task is to analyze the performance of a trading algorithm and provide specific, actionable recommendations for improvement.",
+        "\n--- Current Strategy Rules ---",
+        "1. **Regime Filter:** LONG only if Price > 10-Day SMA; SHORT only if Price < 10-Day SMA.",
+        "2. **Volume Confirmation:** Signal only if Previous Day's Volume > 10-Day Volume SMA.",
+        "3. **Entry Signal:** Previous Green Candle for LONG; Previous Red Candle for SHORT.",
+        "4. **Exits:** Take-Profit at 1.5 * ATR; Stop-Loss at 1.0 * ATR.",
+        "\n--- Recent Trade History ---",
+        trade_history_str,
+        "\n--- Your Analysis Task ---",
+        "1. **Identify Patterns:** Analyze the losing trades. Is there a common reason for failure? (e.g., stop-loss too tight, entering too early, fighting a stronger trend, poor volume confirmation).",
+        "2. **Propose Adjustments:** Based on the patterns, suggest specific, numerical adjustments to the strategy rules. Do not be vague.",
+        "   - **Good Suggestion:** 'The stop-loss at 1.0 * ATR seems too tight, as several trades were stopped out just before reversing. Recommend testing a wider stop-loss of 1.2 * ATR.'",
+        "   - **Bad Suggestion:** 'Maybe adjust the stop-loss.'",
+        "3. **Format Response:** Provide your analysis in the following strict JSON format:",
+    ]
+
+    prompt = "\n".join(prompt_parts)
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "observations": {"type": "STRING", "description": "A summary of the key patterns observed in the losing trades."},
+                    "recommendations": {"type": "STRING", "description": "Specific, actionable suggestions for rule adjustments."}
+                }, "required": ["observations", "recommendations"]
+            }
         }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: .5; }
-        }
-        .btn-secondary {
-            background-color: #374151;
-            color: #d1d5db;
-        }
-        .btn-secondary:hover {
-            background-color: #4b5563;
-        }
-        .animate-spin {
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
-    </style>
-</head>
-<body class="p-4 sm:p-6 lg:p-8">
+    }
 
-    <div class="max-w-7xl mx-auto">
-        <header class="mb-8">
-            <h1 class="text-3xl md:text-4xl font-bold text-white">SHIB Trading AI Dashboard</h1>
-            <p class="text-gray-400 mt-1">Real-time analysis and AI-powered signals for Shiba Inu.</p>
-        </header>
+    gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
 
-        <div id="error-banner" class="hidden bg-red-500/20 text-red-300 p-4 rounded-lg mb-6 border border-red-500/30">
-            <strong>Error:</strong> <span id="error-message"></span>
-        </div>
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(gemini_api_url, json=payload, timeout=60.0)
+            response.raise_for_status()
+            result = response.json()
+        ai_response_text = result['candidates'][0]['content']['parts'][0]['text']
+        return json.loads(ai_response_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI strategy review: {e}")
 
-        <!-- Stats Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-            <div id="price-card" class="card p-4 md:p-6"></div>
-            <div id="change-card" class="card p-4 md:p-6"></div>
-            <div id="market-cap-card" class="card p-4 md:p-6"></div>
-            <div id="volume-card" class="card p-4 md:p-6"></div>
-        </div>
+@app.post("/save-trade")
+async def save_trade(trade_data: dict):
+    if not db_pool: raise HTTPException(status_code=500, detail="Database connection not established.")
+    try:
+        await db_pool.execute('''
+            INSERT INTO simulated_trades (id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, outcome_price, profit_loss, timestamp, ai_reasoning, sentiment_score)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (id) DO UPDATE SET
+                signal_type = EXCLUDED.signal_type, entry_price = EXCLUDED.entry_price, take_profit_price = EXCLUDED.take_profit_price,
+                stop_loss_price = EXCLUDED.stop_loss_price, position_size = EXCLUDED.position_size, status = EXCLUDED.status,
+                outcome_price = EXCLUDED.outcome_price, profit_loss = EXCLUDED.profit_loss, timestamp = EXCLUDED.timestamp,
+                ai_reasoning = EXCLUDED.ai_reasoning, sentiment_score = EXCLUDED.sentiment_score;
+        ''',
+        trade_data['id'], trade_data['signalType'], float(trade_data['entryPrice']), float(trade_data['takeProfitPrice']),
+        float(trade_data['stopLossPrice']), float(trade_data['positionSize']), trade_data['status'],
+        trade_data.get('outcomePrice'), trade_data.get('profitLoss'), trade_data['timestamp'],
+        trade_data['aiReasoning'], trade_data.get('sentimentScore')
+        )
+        return {"message": "Trade saved successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error saving trade: {e}")
 
-        <!-- Main Content: Chart and AI Signal -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-            <div class="lg:col-span-2 card p-4 md:p-6">
-                <h3 class="text-lg font-semibold text-white mb-4">7-Day Price Chart</h3>
-                <div class="h-80">
-                    <canvas id="priceChart"></canvas>
-                </div>
-            </div>
-            <div class="flex flex-col gap-6">
-                <div id="signal-display" class="card p-6"></div>
-                <button id="find-trade-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800/50 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 flex items-center justify-center shadow-lg hover:shadow-indigo-500/50">
-                    Find Next Trade
-                </button>
-            </div>
-        </div>
+@app.get("/get-all-trades")
+async def get_all_trades():
+    if not db_pool: raise HTTPException(status_code=500, detail="Database connection not established.")
+    try:
+        records = await db_pool.fetch('SELECT * FROM simulated_trades ORDER BY timestamp DESC;')
+        return {"trades": [dict(record) for record in records]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error fetching trades: {e}")
 
-        <!-- Performance, News, and Strategy Review -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-            <div id="performance-panel" class="card p-6"></div>
-            <div class="lg:col-span-2 flex flex-col gap-6">
-                <div id="news-panel" class="card p-6 flex-grow"></div>
-                <div id="review-panel" class="card p-6">
-                    <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
-                        <i data-lucide="search" class="mr-2 text-indigo-400"></i>
-                        AI Performance Review
-                    </h3>
-                    <div id="review-content" class="text-gray-300 space-y-4">
-                        <p class="text-sm italic">Click the button to have the AI analyze its recent performance and suggest strategy improvements.</p>
-                    </div>
-                    <button id="analyze-btn" class="w-full mt-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800/50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center">
-                        <span id="analyze-btn-text">Analyze & Suggest Improvements</span>
-                    </button>
-                </div>
-            </div>
-        </div>
+@app.post("/check-signal-outcome")
+async def check_signal_outcome(trade_details: dict):
+    entry_price = trade_details.get("entry_price")
+    take_profit_price = trade_details.get("take_profit_price")
+    stop_loss_price = trade_details.get("stop_loss_price")
+    signal_type = trade_details.get("signal_type")
+    timestamp = trade_details.get("timestamp")
+    trade_id = trade_details.get("id")
 
-        <!-- Signal History Table -->
-        <div class="mt-6 card p-4 md:p-6">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-semibold text-white flex items-center">
-                    <i data-lucide="clock" class="mr-2 text-indigo-400"></i>
-                    Recent Signal History
-                </h3>
-                <button id="refresh-results-btn" class="btn-secondary text-sm font-semibold py-2 px-4 rounded-lg flex items-center disabled:opacity-50">
-                    <i data-lucide="refresh-cw" class="mr-2 h-4 w-4"></i>
-                    <span id="refresh-btn-text">Refresh Results</span>
-                </button>
-            </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm text-left text-gray-300">
-                    <thead class="text-xs text-gray-400 uppercase bg-gray-900/50">
-                        <tr>
-                            <th scope="col" class="px-4 py-3">Date</th>
-                            <th scope="col" class="px-4 py-3">Type</th>
-                            <th scope="col" class="px-4 py-3">Entry Price</th>
-                            <th scope="col" class="px-4 py-3">Planned Exit</th>
-                            <th scope="col" class="px-4 py-3">Profit %</th>
-                            <th scope="col" class="px-4 py-3">Status</th>
-                            <th scope="col" class="px-4 py-3">AI Reasoning</th>
-                        </tr>
-                    </thead>
-                    <tbody id="history-table-body">
-                        <!-- History rows will be inserted here by JavaScript -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+    if not all([entry_price, take_profit_price, stop_loss_price, signal_type, timestamp, trade_id]):
+        raise HTTPException(status_code=400, detail="Missing trade details for outcome check.")
 
-    <footer class="text-center text-gray-500 text-xs mt-12 pb-4">
-        <p>Disclaimer: This is a simulation tool for educational purposes only. Not financial advice.</p>
-    </footer>
+    try:
+        from_ts = timestamp / 1000
+        to_ts = from_ts + (2 * 24 * 60 * 60)
+        chart_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart/range?vs_currency=usd&from={from_ts}&to={to_ts}"
+        data = await fetch_coingecko_data(chart_url)
+        prices = data.get('prices', [])
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            // --- Configuration ---
-            const API_BASE_URL = "https://shib-trading-app.onrender.com";
-            let priceChart = null;
-            let shibData = {};
-            let historicalData = { ohlc: [], volumes: [] };
-            let allTrades = [];
+        if not prices or len(prices) < 2:
+            return {"status": "pending", "outcomePrice": entry_price, "profitLoss": 0, "message": "Not enough data."}
 
-            // --- UI Elements ---
-            const priceCard = document.getElementById('price-card');
-            const changeCard = document.getElementById('change-card');
-            const marketCapCard = document.getElementById('market-cap-card');
-            const volumeCard = document.getElementById('volume-card');
-            const signalDisplay = document.getElementById('signal-display');
-            const performancePanel = document.getElementById('performance-panel');
-            const newsPanel = document.getElementById('news-panel');
-            const historyTableBody = document.getElementById('history-table-body');
-            const findTradeBtn = document.getElementById('find-trade-btn');
-            const refreshBtn = document.getElementById('refresh-results-btn');
-            const refreshBtnText = document.getElementById('refresh-btn-text');
-            const analyzeBtn = document.getElementById('analyze-btn');
-            const analyzeBtnText = document.getElementById('analyze-btn-text');
-            const reviewContent = document.getElementById('review-content');
-            const errorBanner = document.getElementById('error-banner');
-            const errorMessage = document.getElementById('error-message');
-
-            // --- Helper Functions ---
-            const showLoadingState = () => {
-                priceCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
-                changeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
-                marketCapCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
-                volumeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
-                signalDisplay.innerHTML = `<div class="h-32 pulse bg-gray-700 rounded-md"></div>`;
-                performancePanel.innerHTML = `<div class="h-24 pulse bg-gray-700 rounded-md"></div>`;
-                newsPanel.innerHTML = `<div class="h-48 pulse bg-gray-700 rounded-md"></div>`;
-                historyTableBody.innerHTML = `<tr><td colspan="7" class="p-4"><div class="h-8 pulse bg-gray-700 rounded-md"></div></td></tr>`;
-                findTradeBtn.disabled = true;
-                refreshBtn.disabled = true;
-                analyzeBtn.disabled = true;
-            };
-
-            const updateStats = (data) => {
-                shibData = data;
-                const price = data.current_price ? `$${data.current_price.toFixed(8)}` : 'N/A';
-                const change = data.price_change_24h ? `${data.price_change_24h.toFixed(2)}%` : 'N/A';
-                const marketCap = data.market_cap ? `$${(data.market_cap / 1e9).toFixed(2)}B` : 'N/A';
-                const volume = data.total_volume ? `$${(data.total_volume / 1e6).toFixed(2)}M` : 'N/A';
-                const isPositive = data.price_change_24h > 0;
-
-                priceCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">Current Price</p><i data-lucide="trending-up" class="text-green-400"></i></div><h3 class="text-2xl md:text-3xl font-bold text-white">${price}</h3>`;
-                changeCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h Change</p><i data-lucide="${isPositive ? 'arrow-up' : 'arrow-down'}" class="${isPositive ? 'text-green-400' : 'text-red-400'}"></i></div><h3 class="text-2xl md:text-3xl font-bold text-white">${change}</h3>`;
-                marketCapCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">Market Cap</p></div><h3 class="text-2xl md:text-3xl font-bold text-white">${marketCap}</h3>`;
-                volumeCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h Volume</p></div><h3 class="text-2xl md:text-3xl font-bold text-white">${volume}</h3>`;
-            };
-
-            const updateChart = (data) => {
-                historicalData = data;
-                const closingPrices = data.ohlc.map(d => d[4]);
-                const labels = data.ohlc.map(d => new Date(d[0]).toLocaleDateString());
-                const ctx = document.getElementById('priceChart').getContext('2d');
-                if (priceChart) priceChart.destroy();
-                priceChart = new Chart(ctx, {
-                    type: 'line',
-                    data: { labels, datasets: [{ label: 'SHIB Price (USD)', data: closingPrices, borderColor: 'rgba(99, 102, 241, 1)', backgroundColor: 'rgba(99, 102, 241, 0.2)', fill: true, tension: 0.4, pointRadius: 0 }] },
-                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { ticks: { callback: (value) => `$${value.toFixed(8)}`, color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } } }
-                });
-            };
-            
-            const updateSignal = (signal, reasoning) => {
-                 let colorClass = 'bg-yellow-500/20 text-yellow-400';
-                 let icon = 'help-circle';
-                 if (signal === 'LONG') { colorClass = 'bg-green-500/20 text-green-400'; icon = 'trending-up'; } 
-                 else if (signal === 'SHORT') { colorClass = 'bg-red-500/20 text-red-400'; icon = 'arrow-down'; }
-                 signalDisplay.innerHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="brain-circuit" class="mr-2 text-indigo-400"></i> AI Trade Signal</h3><div class="text-center"><div class="inline-flex items-center justify-center px-6 py-3 rounded-full text-2xl font-bold mb-4 ${colorClass}"><i data-lucide="${icon}" class="mr-2"></i> ${signal}</div><p class="text-gray-300 text-sm italic px-4">${reasoning}</p></div>`;
-            };
-
-            const updatePerformance = (trades) => {
-                const totalTrades = trades.length;
-                const wins = trades.filter(t => t.status === 'win').length;
-                const accuracy = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : "0.0";
-                performancePanel.innerHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="bar-chart" class="mr-2 text-indigo-400"></i> Performance</h3><div class="grid grid-cols-2 gap-4 text-center"><div><p class="text-3xl font-bold text-white">${totalTrades}</p><p class="text-sm text-gray-400">Total Signals</p></div><div><p class="text-3xl font-bold text-green-400">${accuracy}%</p><p class="text-sm text-gray-400">Accuracy</p></div></div>`;
-            };
-
-            const updateNews = (news) => {
-                let newsHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="rss" class="mr-2 text-indigo-400"></i> Latest Crypto News</h3>`;
-                if (news.length > 0) {
-                    newsHTML += '<div class="space-y-4 max-h-48 overflow-y-auto pr-2">';
-                    news.forEach(item => {
-                        newsHTML += `<a href="${item.url}" target="_blank" rel="noopener noreferrer" class="block p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-colors"><p class="font-semibold text-sm text-gray-200 truncate">${item.title}</p><p class="text-xs text-gray-400">${item.source}</p></a>`;
-                    });
-                    newsHTML += '</div>';
-                } else {
-                    newsHTML += `<p class="text-gray-400 text-center py-8">Could not load news.</p>`;
-                }
-                newsPanel.innerHTML = newsHTML;
-            };
-
-            const updateHistoryTable = (trades) => {
-                allTrades = trades;
-                if (trades.length === 0) {
-                    historyTableBody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-gray-500">No trade history yet.</td></tr>`;
-                    return;
-                }
-                let tableHTML = '';
-                trades.slice(0, 10).forEach(trade => {
-                    let statusIcon = 'minus-circle', statusColor = 'text-gray-500';
-                    if (trade.status === 'win') { statusIcon = 'check-circle'; statusColor = 'text-green-500'; }
-                    if (trade.status === 'loss') { statusIcon = 'x-circle'; statusColor = 'text-red-500'; }
-                    if (trade.status === 'pending') { statusIcon = 'clock'; statusColor = 'text-yellow-500'; }
-                    
-                    const entry = trade.entry_price;
-                    const exit = trade.take_profit_price;
-                    let profitPct = (entry > 0) ? (((trade.signal_type === 'LONG' ? exit - entry : entry - exit) / entry) * 100) : 0;
-
-                    tableHTML += `<tr class="border-b border-gray-700 hover:bg-gray-700/30"><td class="px-4 py-4 font-medium whitespace-nowrap">${new Date(trade.timestamp).toLocaleString()}</td><td class="px-4 py-4"><span class="px-2 py-1 rounded-full text-xs font-semibold ${trade.signal_type === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${trade.signal_type}</span></td><td class="px-4 py-4">$${entry.toFixed(8)}</td><td class="px-4 py-4">$${exit.toFixed(8)}</td><td class="px-4 py-4 font-semibold ${profitPct >= 0 ? 'text-green-400' : 'text-red-400'}">${profitPct.toFixed(2)}%</td><td class="px-4 py-4"><div class="flex items-center space-x-2 ${statusColor}"><i data-lucide="${statusIcon}"></i><span class="capitalize">${trade.status}</span></div></td><td class="px-4 py-4 text-gray-400 italic max-w-xs truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning}</td></tr>`;
-                });
-                historyTableBody.innerHTML = tableHTML;
-            };
-
-            const showError = (message) => {
-                errorMessage.textContent = message;
-                errorBanner.classList.remove('hidden');
-            };
-
-            const fetchAllTrades = async () => {
-                try {
-                    const res = await fetch(`${API_BASE_URL}/get-all-trades`);
-                    if (!res.ok) throw new Error('Failed to fetch trade history.');
-                    const data = await res.json();
-                    updatePerformance(data.trades || []);
-                    updateHistoryTable(data.trades || []);
-                } catch (err) { showError(err.message); }
-            };
-
-            const fetchInitialData = async () => {
-                showLoadingState();
-                try {
-                    const [pricesRes, histRes, newsRes] = await Promise.all([
-                        fetch(`${API_BASE_URL}/shib-prices`),
-                        fetch(`${API_BASE_URL}/shib-historical-data`),
-                        fetch(`${API_BASE_URL}/crypto-news/5`),
-                    ]);
-
-                    if (!pricesRes.ok || !histRes.ok) throw new Error('Failed to fetch market data.');
-                    
-                    const pricesData = await pricesRes.json();
-                    const historyData = await histRes.json();
-                    
-                    updateStats(pricesData);
-                    updateChart(historyData);
-                    updateSignal('NEUTRAL', 'Click "Find Next Trade" to get an AI analysis.');
-
-                    if (newsRes.ok) updateNews(await newsRes.json().then(d => d.news || []));
-                    else updateNews([]);
-                    
-                    await fetchAllTrades();
-                } catch (err) { showError(err.message); } 
-                finally {
-                    findTradeBtn.disabled = false;
-                    refreshBtn.disabled = false;
-                    analyzeBtn.disabled = false;
-                    lucide.createIcons();
-                }
-            };
-
-            findTradeBtn.addEventListener('click', async () => {
-                if (!shibData.current_price) return alert("Market data not loaded yet.");
-                findTradeBtn.disabled = true;
-                findTradeBtn.innerHTML = 'Analyzing...';
-                errorBanner.classList.add('hidden');
-                try {
-                    const res = await fetch(`${API_BASE_URL}/ai-trade-signal`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ current_price: shibData.current_price, historical_ohlc: historicalData.ohlc, historical_volumes: historicalData.volumes }),
-                    });
-                    if (!res.ok) throw new Error(await res.json().then(d => d.detail || res.statusText));
-                    const signalData = await res.json();
-                    updateSignal(signalData.signal_type, signalData.reasoning);
-
-                    if (signalData.signal_type !== 'NEUTRAL') {
-                        const trade = {
-                            id: Date.now(),
-                            signalType: signalData.signal_type,
-                            entryPrice: shibData.current_price,
-                            takeProfitPrice: signalData.take_profit_price,
-                            stopLossPrice: signalData.stop_loss_price,
-                            positionSize: 1000,
-                            status: 'pending',
-                            timestamp: Date.now(),
-                            aiReasoning: signalData.reasoning,
-                        };
-                        await fetch(`${API_BASE_URL}/save-trade`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(trade) });
-                        await fetchAllTrades();
-                    }
-                } catch (err) {
-                    showError(err.message);
-                    updateSignal('ERROR', `Failed to get signal: ${err.message}`);
-                } finally {
-                    findTradeBtn.disabled = false;
-                    findTradeBtn.innerHTML = 'Find Next Trade';
-                    lucide.createIcons();
-                }
-            });
-
-            const checkPendingTrades = async () => {
-                refreshBtn.disabled = true;
-                refreshBtnText.textContent = 'Refreshing...';
-                const refreshIcon = refreshBtn.querySelector('i');
-                if (refreshIcon) refreshIcon.classList.add('animate-spin');
-
-                const pendingTrades = allTrades.filter(t => t.status === 'pending');
-                if (pendingTrades.length === 0) {
-                    refreshBtn.disabled = false;
-                    refreshBtnText.textContent = 'Refresh Results';
-                    if (refreshIcon) refreshIcon.classList.remove('animate-spin');
-                    return;
-                }
-                try {
-                    const checkPromises = pendingTrades.map(trade => fetch(`${API_BASE_URL}/check-signal-outcome`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(trade),
-                    }));
-                    await Promise.all(checkPromises);
-                } catch (err) { showError("An error occurred while refreshing results."); }
-                finally {
-                    await fetchAllTrades();
-                    refreshBtn.disabled = false;
-                    refreshBtnText.textContent = 'Refresh Results';
-                    if (refreshIcon) refreshIcon.classList.remove('animate-spin');
-                    lucide.createIcons();
-                }
-            };
-
-            const analyzeStrategy = async () => {
-                if (allTrades.length === 0) return alert("No trade history to analyze.");
-                analyzeBtn.disabled = true;
-                analyzeBtnText.textContent = 'AI is Analyzing...';
-                reviewContent.innerHTML = `<div class="h-24 pulse bg-gray-700 rounded-md"></div>`;
-                try {
-                    const res = await fetch(`${API_BASE_URL}/ai-strategy-review`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(allTrades.slice(0, 20)) // Send last 20 trades for review
-                    });
-                    if (!res.ok) throw new Error(await res.json().then(d => d.detail || 'Failed to get analysis.'));
-                    const review = await res.json();
-                    reviewContent.innerHTML = `
-                        <div class="space-y-3">
-                            <div>
-                                <h4 class="font-semibold text-gray-100">Observations:</h4>
-                                <p class="text-sm text-gray-300">${review.observations}</p>
-                            </div>
-                            <div>
-                                <h4 class="font-semibold text-gray-100">Recommendations:</h4>
-                                <p class="text-sm text-gray-300">${review.recommendations}</p>
-                            </div>
-                        </div>`;
-                } catch(err) {
-                    reviewContent.innerHTML = `<p class="text-red-400">Error: ${err.message}</p>`;
-                } finally {
-                    analyzeBtn.disabled = false;
-                    analyzeBtnText.textContent = 'Analyze & Suggest Improvements';
-                }
-            };
-
-            refreshBtn.addEventListener('click', checkPendingTrades);
-            analyzeBtn.addEventListener('click', analyzeStrategy);
-
-            // --- Initial Load ---
-            fetchInitialData();
-        });
-    </script>
-</body>
-</html>
+        outcome, final_price, profit_loss = 'pending', entry_price, 0
+        for _, price in prices:
+            final_price = price
+            if signal_type == 'LONG':
+                if price >= take_profit_price: outcome = 'win'; break
+                if price <= stop_loss_price: outcome = 'loss'; break
+            else: # SHORT
+                if price <= take_profit_price: outcome = 'win'; break
+                if price >= stop_loss_price: outcome = 'loss'; break
+        
+        await db_pool.execute(
+            'UPDATE simulated_trades SET status = $1, outcome_price = $2, profit_loss = $3 WHERE id = $4;',
+            outcome, final_price, profit_loss, trade_id
+        )
+        return {"status": outcome, "outcomePrice": final_price, "profitLoss": profit_loss}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check signal outcome: {e}")
