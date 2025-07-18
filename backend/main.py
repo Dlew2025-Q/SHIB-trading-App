@@ -135,6 +135,8 @@ async def get_shib_prices():
             "price_change_24h": market_data.get('price_change_percentage_24h'),
             "market_cap": market_data.get('market_cap', {}).get('usd'),
             "total_volume": market_data.get('total_volume', {}).get('usd'),
+            "high_24h": market_data.get('high_24h', {}).get('usd'), # ADDED
+            "low_24h": market_data.get('low_24h', {}).get('usd'),   # ADDED
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process SHIB prices: {e}")
@@ -377,7 +379,6 @@ async def check_signal_outcome(trade_details: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to check signal outcome: {e}")
 
-# --- NEW: Endpoint to purge the database ---
 @app.post("/purge-db")
 async def purge_db():
     if not db_pool:
