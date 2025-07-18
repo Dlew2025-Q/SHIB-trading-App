@@ -376,3 +376,18 @@ async def check_signal_outcome(trade_details: dict):
         return {"status": outcome, "outcomePrice": final_price, "profitLoss": profit_loss}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to check signal outcome: {e}")
+
+# --- NEW: Endpoint to purge the database ---
+@app.post("/purge-db")
+async def purge_db():
+    if not db_pool:
+        raise HTTPException(status_code=500, detail="Database connection not established.")
+    
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute('TRUNCATE TABLE simulated_trades;')
+        print("Database table 'simulated_trades' has been purged.")
+        return {"message": "Trade history has been successfully cleared."}
+    except Exception as e:
+        print(f"CRITICAL ERROR: Could not purge database table: {e}")
+        raise HTTPException(status_code=500, detail="Failed to clear trade history.")
