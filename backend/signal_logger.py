@@ -96,14 +96,15 @@ async def get_ai_trade_signal(market_data):
     yesterday_ohlc = market_data['historical_ohlc'][-1]
     yesterday_open, yesterday_close = yesterday_ohlc[1], yesterday_ohlc[4]
 
+    # UPDATED PROMPT with more aggressive exit strategy
     prompt_parts = [
-        "You are a trading analyst. Your task is to evaluate a simple momentum strategy and generate a signal if the conditions are met.",
+        "You are a trading analyst. Your task is to evaluate a simple momentum strategy with an aggressive, short-term exit strategy and generate a signal if the conditions are met.",
         "\n--- Strategy Rules ---",
         "1. **Regime Filter:** LONG if Current Price > 10-Day SMA; SHORT if Current Price < 10-Day SMA.",
         "2. **Entry Signal:** Previous Green Candle (Close > Open) for LONG; Previous Red Candle (Close < Open) for SHORT.",
-        "3. **Dynamic Exits (ATR):** Calculate exit points using the provided 14-day Average True Range (ATR).",
-        "   - **Take-Profit:** Entry Price +/- (1.5 * ATR)",
-        "   - **Stop-Loss:** Entry Price -/+ (1.0 * ATR)",
+        "3. **Dynamic Exits (ATR) - Day Trader Version:** Calculate exit points using the provided 14-day Average True Range (ATR).",
+        "   - **Take-Profit:** Entry Price +/- (0.8 * ATR)  <-- TIGHTER TARGET",
+        "   - **Stop-Loss:** Entry Price -/+ (0.5 * ATR)   <-- TIGHTER STOP",
         "4. **Final Decision:** A trade signal is only generated if ALL conditions for that direction are met. If any condition fails, you MUST return a 'NEUTRAL' signal.",
         "\n--- Data Provided for Analysis ---",
         f"- Current Price (for Entry): ${market_data['current_price']}",
@@ -154,15 +155,15 @@ async def run_logging_loop():
         # 1. Fetch market data
         market_data = await get_market_data()
         if not market_data:
-            print("Failed to get market data. Retrying in 30 minutes.")
-            await asyncio.sleep(1800)
+            print("Failed to get market data. Retrying in 15 minutes.")
+            await asyncio.sleep(900) # UPDATED: 15 minutes
             continue
         
         # 2. Get AI signal
         ai_signal = await get_ai_trade_signal(market_data)
         if not ai_signal or ai_signal.get('signal_type') == 'NEUTRAL':
             print("AI signal is NEUTRAL. No signal logged.")
-            await asyncio.sleep(1800) # Sleep for 30 minutes
+            await asyncio.sleep(900) # UPDATED: 15 minutes
             continue
 
         # 3. Log the signal to the database
@@ -180,8 +181,8 @@ async def run_logging_loop():
         await save_signal_to_db(trade_to_log)
         
         # 4. Wait for the next cycle
-        print("Cycle complete. Sleeping for 30 minutes.")
-        await asyncio.sleep(1800)
+        print("Cycle complete. Sleeping for 15 minutes.")
+        await asyncio.sleep(900) # UPDATED: 15 minutes
 
 async def main():
     """Initializes the database connection and starts the logging loop."""
