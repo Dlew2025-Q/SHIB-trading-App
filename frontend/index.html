@@ -87,7 +87,7 @@
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
             <div id="price-card" class="card p-4 md:p-6"></div>
             <div id="change-card" class="card p-4 md:p-6"></div>
-            <div id="daily-range-card" class="card p-4 md:p-6"></div> <!-- MODIFIED -->
+            <div id="daily-range-card" class="card p-4 md:p-6"></div>
             <div id="volume-card" class="card p-4 md:p-6"></div>
         </div>
 
@@ -139,7 +139,6 @@
                         <i data-lucide="refresh-cw" class="mr-2 h-4 w-4"></i>
                         <span id="refresh-btn-text">Refresh Results</span>
                     </button>
-                    <!-- NEW: Clear History Button -->
                     <button id="purge-db-btn" class="bg-red-600/80 hover:bg-red-700 text-sm font-semibold py-2 px-4 rounded-lg flex items-center disabled:opacity-50">
                         <i data-lucide="trash-2" class="mr-2 h-4 w-4"></i>
                         <span>Clear History</span>
@@ -167,7 +166,7 @@
         </div>
     </div>
 
-    <!-- NEW: Confirmation Modal -->
+    <!-- Confirmation Modal -->
     <div id="confirmation-modal" class="modal-overlay hidden">
         <div class="modal-box text-center">
             <h3 class="text-lg font-bold text-white mb-2">Are you sure?</h3>
@@ -195,7 +194,7 @@
             // --- UI Elements ---
             const priceCard = document.getElementById('price-card');
             const changeCard = document.getElementById('change-card');
-            const dailyRangeCard = document.getElementById('daily-range-card'); // MODIFIED
+            const dailyRangeCard = document.getElementById('daily-range-card');
             const volumeCard = document.getElementById('volume-card');
             const signalDisplay = document.getElementById('signal-display');
             const performancePanel = document.getElementById('performance-panel');
@@ -218,7 +217,7 @@
             const showLoadingState = () => {
                 priceCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
                 changeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
-                dailyRangeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`; // MODIFIED
+                dailyRangeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
                 volumeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
                 signalDisplay.innerHTML = `<div class="h-32 pulse bg-gray-700 rounded-md"></div>`;
                 performancePanel.innerHTML = `<div class="h-24 pulse bg-gray-700 rounded-md"></div>`;
@@ -234,14 +233,14 @@
                 shibData = data;
                 const price = data.current_price ? `$${data.current_price.toFixed(8)}` : 'N/A';
                 const change = data.price_change_24h ? `${data.price_change_24h.toFixed(2)}%` : 'N/A';
-                const high = data.high_24h ? `$${data.high_24h.toFixed(8)}` : 'N/A'; // ADDED
-                const low = data.low_24h ? `$${data.low_24h.toFixed(8)}` : 'N/A';   // ADDED
+                const high = data.high_24h ? `$${data.high_24h.toFixed(8)}` : 'N/A';
+                const low = data.low_24h ? `$${data.low_24h.toFixed(8)}` : 'N/A';
                 const volume = data.total_volume ? `$${(data.total_volume / 1e6).toFixed(2)}M` : 'N/A';
                 const isPositive = data.price_change_24h > 0;
 
                 priceCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">Current Price</p><i data-lucide="trending-up" class="text-green-400"></i></div><h3 class="text-2xl md:text-3xl font-bold text-white">${price}</h3>`;
                 changeCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h Change</p><i data-lucide="${isPositive ? 'arrow-up' : 'arrow-down'}" class="${isPositive ? 'text-green-400' : 'text-red-400'}"></i></div><h3 class="text-2xl md:text-3xl font-bold text-white">${change}</h3>`;
-                dailyRangeCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h High / Low</p></div><h3 class="text-xl font-bold text-white">${high} / ${low}</h3>`; // MODIFIED
+                dailyRangeCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h High / Low</p></div><h3 class="text-xl font-bold text-white">${high} / ${low}</h3>`;
                 volumeCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">24h Volume</p></div><h3 class="text-2xl md:text-3xl font-bold text-white">${volume}</h3>`;
             };
 
@@ -446,6 +445,14 @@
                             <div>
                                 <h4 class="font-semibold text-gray-100">Recommendations:</h4>
                                 <p class="text-sm text-gray-300">${review.recommendations}</p>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-100">Suggested Position Sizing:</h4>
+                                <p class="text-sm text-gray-300">${review.suggested_position_size}</p>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-100">Suggested Risk/Reward Ratio:</h4>
+                                <p class="text-sm text-gray-300">${review.suggested_risk_reward_ratio}</p>
                             </div>
                         </div>`;
                 } catch(err) {
