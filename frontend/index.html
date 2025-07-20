@@ -115,10 +115,10 @@
                 <div id="review-panel" class="card p-6">
                     <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
                         <i data-lucide="calculator" class="mr-2 text-indigo-400"></i>
-                        AI Performance Backtest
+                        AI Performance Review
                     </h3>
                     <div id="review-content" class="text-gray-300 space-y-4">
-                        <p class="text-sm italic">Click the button to run a simulation based on your trade history.</p>
+                        <p class="text-sm italic">Click the button to run a simulation and get strategy feedback.</p>
                     </div>
                     <button id="analyze-btn" class="w-full mt-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800/50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 flex items-center justify-center">
                         <span id="analyze-btn-text">Analyze Performance</span>
@@ -436,12 +436,27 @@
                     });
                     if (!res.ok) throw new Error(await res.json().then(d => d.detail || 'Failed to get analysis.'));
                     const review = await res.json();
-                    // FIX: Correctly display the single backtest_result key
                     reviewContent.innerHTML = `
                         <div class="space-y-3">
                             <div>
                                 <h4 class="font-semibold text-gray-100">Backtest Result:</h4>
-                                <p class="text-md text-gray-300">${review.backtest_result}</p>
+                                <p class="text-md font-semibold text-indigo-300">${review.backtest_result}</p>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-100">Observations:</h4>
+                                <p class="text-sm text-gray-300">${review.observations}</p>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-100">Recommendations:</h4>
+                                <p class="text-sm text-gray-300">${review.recommendations}</p>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-100">Suggested Position Sizing:</h4>
+                                <p class="text-sm text-gray-300">${review.suggested_position_size}</p>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-100">Suggested Risk/Reward Ratio:</h4>
+                                <p class="text-sm text-gray-300">${review.suggested_risk_reward_ratio}</p>
                             </div>
                         </div>`;
                 } catch(err) {
