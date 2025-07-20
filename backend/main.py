@@ -272,10 +272,10 @@ async def ai_strategy_review(trades: list[dict]):
         trade_history_str,
         "\n--- Your Analysis Task ---",
         "1. **Identify Patterns:** Analyze the losing trades. Is there a common reason for failure? (e.g., stop-loss too tight, entering too early, fighting a stronger trend).",
-        "2. **Suggest Rule Adjustments:** Based on the patterns, suggest specific, numerical adjustments to the strategy rules.",
+        "2. **Suggest Rule Adjustments:** Based on the patterns, suggest specific, numerical adjustments to the strategy rules. Do not be vague.",
         "3. **Suggest Position Sizing:** Based on the strategy's volatility and win-rate, recommend a standard position sizing rule as a percentage of bankroll. A common rule is 1-2%.",
         "4. **Suggest Risk/Reward Ratio:** Analyze if the current 1.6:1 ratio is effective. If trades are often stopped out, suggest a wider stop (e.g., 1.2:1). If trades win but could have run further, suggest a larger target (e.g., 2:1).",
-        "5. **Format Response:** Provide your analysis in the following strict JSON format:",
+        "5. **Format Response:** You MUST provide your analysis in the following strict JSON format, including all four keys.",
     ]
 
     prompt = "\n".join(prompt_parts)
