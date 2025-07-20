@@ -245,36 +245,32 @@ async def ai_trade_signal(request_body: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI signal generation: {e}")
 
-# --- NEW: AI BACKTESTING ENDPOINT ---
 @app.post("/ai-strategy-review")
 async def ai_strategy_review(trades: list[dict]):
     if not trades:
         raise HTTPException(status_code=400, detail="No trade history provided for review.")
 
-    # Filter for only completed trades (win or loss)
     completed_trades = [t for t in trades if t.get('status') in ['win', 'loss']]
     if not completed_trades:
-        return {"backtest_result": "Not enough completed trades to run a simulation."}
+        return {"backtest_result": "Not enough completed trades to run a simulation.", "observations": "N/A", "recommendations": "N/A", "suggested_position_size": "N/A", "suggested_risk_reward_ratio": "N/A"}
 
-    # Reverse the list so the AI processes from oldest to newest
     completed_trades.reverse()
-
     trade_history_str = "\n".join([f"- Status: {t['status']}" for t in completed_trades])
 
     prompt_parts = [
-        "You are a quantitative analyst. Your task is to run a simple portfolio simulation based on a provided trade history and a specific money management rule.",
-        "\n--- Simulation Rules ---",
-        "1. **Starting Bankroll:** Assume a starting bankroll of $10,000.",
-        "2. **Position Sizing:** On each trade, the investment amount is exactly 2% of the *current* bankroll.",
-        "3. **Profit Target:** For every 'win' status trade, assume a fixed profit of 1% on the invested amount.",
-        "4. **Loss Amount:** For every 'loss' status trade, assume a fixed loss of 0.625% on the invested amount (maintaining a 1.6:1 reward/risk ratio based on the 1% profit target).",
-        "5. **Calculation:** Go through the trades chronologically. For each trade, calculate the win/loss amount in dollars and update the bankroll before moving to the next trade.",
-        "\n--- Completed Trade History (Oldest to Newest) ---",
+        "You are an expert quantitative trading strategist. Your task is to analyze the performance of a trading algorithm and provide a full analysis including a portfolio simulation.",
+        "\n--- Current Strategy Rules ---",
+        "1. **Regime Filter:** LONG only if Price > 10-Day SMA; SHORT only if Price < 10-Day SMA.",
+        "2. **Entry Signal:** Previous Green Candle for LONG; Previous Red Candle for SHORT.",
+        "3. **Exits:** Take-Profit at 0.8 * ATR; Stop-Loss at 0.5 * ATR. (This is a 1.6-to-1 Reward/Risk Ratio).",
+        "\n--- Recent Completed Trade History (Oldest to Newest) ---",
         trade_history_str,
-        "\n--- Your Task ---",
-        "1. Perform the simulation as described above.",
-        "2. Calculate the total percentage gain or loss on the initial $10,000 bankroll.",
-        "3. Provide your response in the following strict JSON format. The result should be a single, clear sentence.",
+        "\n--- Your Analysis Task (MUST COMPLETE ALL PARTS) ---",
+        "1. **Portfolio Simulation:** Run a simulation with a starting bankroll of $10,000. For each trade, invest 2% of the current bankroll. A 'win' earns 1% profit on the invested amount; a 'loss' incurs a 0.625% loss. Calculate the final bankroll and total percentage return.",
+        "2. **Identify Patterns:** Analyze the losing trades. Is there a common reason for failure? (e.g., stop-loss too tight, entering too early).",
+        "3. **Suggest Rule Adjustments:** Based on the patterns, suggest specific, numerical adjustments to the strategy rules.",
+        "4. **Suggest Position Sizing & Risk/Reward:** Based on the simulation, recommend a position size (% of bankroll) and a Reward/Risk ratio.",
+        "5. **Format Response:** You MUST provide your complete analysis in the following strict JSON format, filling all five keys.",
     ]
 
     prompt = "\n".join(prompt_parts)
@@ -286,8 +282,12 @@ async def ai_strategy_review(trades: list[dict]):
             "responseSchema": {
                 "type": "OBJECT",
                 "properties": {
-                    "backtest_result": {"type": "STRING", "description": "The final summary sentence of the backtest result. Example: 'If you had invested 2% of your account on each trade with a 1% profit target, your total return would have been +12.5%.'"}
-                }, "required": ["backtest_result"]
+                    "backtest_result": {"type": "STRING", "description": "The final summary sentence of the backtest result."},
+                    "observations": {"type": "STRING", "description": "A summary of the key patterns observed in the losing trades."},
+                    "recommendations": {"type": "STRING", "description": "Specific, actionable suggestions for rule adjustments."},
+                    "suggested_position_size": {"type": "STRING", "description": "A suggested bankroll percentage to risk per trade, e.g., '1-2%'"},
+                    "suggested_risk_reward_ratio": {"type": "STRING", "description": "A suggested Reward-to-Risk ratio, e.g., '1.5:1'"}
+                }, "required": ["backtest_result", "observations", "recommendations", "suggested_position_size", "suggested_risk_reward_ratio"]
             }
         }
     }
@@ -303,6 +303,7 @@ async def ai_strategy_review(trades: list[dict]):
         return json.loads(ai_response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI strategy review: {e}")
+
 
 @app.post("/save-trade")
 async def save_trade(trade_data: dict):
