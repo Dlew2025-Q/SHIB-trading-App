@@ -263,19 +263,19 @@ async def ai_strategy_review(trades: list[dict]):
     trade_history_str = "\n".join(formatted_trades)
 
     prompt_parts = [
-        "You are an expert quantitative trading strategist. Your task is to analyze the performance of a trading algorithm and provide specific, actionable recommendations for improvement.",
+        "You are an expert quantitative trading strategist. Your task is to analyze the performance of a trading algorithm and provide specific, actionable recommendations for improvement, including money management.",
         "\n--- Current Strategy Rules ---",
         "1. **Regime Filter:** LONG only if Price > 10-Day SMA; SHORT only if Price < 10-Day SMA.",
         "2. **Entry Signal:** Previous Green Candle for LONG; Previous Red Candle for SHORT.",
-        "3. **Exits:** Take-Profit at 0.8 * ATR; Stop-Loss at 0.5 * ATR.",
+        "3. **Exits:** Take-Profit at 0.8 * ATR; Stop-Loss at 0.5 * ATR. (This is a 1.6-to-1 Reward/Risk Ratio).",
         "\n--- Recent Trade History ---",
         trade_history_str,
         "\n--- Your Analysis Task ---",
         "1. **Identify Patterns:** Analyze the losing trades. Is there a common reason for failure? (e.g., stop-loss too tight, entering too early, fighting a stronger trend).",
-        "2. **Propose Adjustments:** Based on the patterns, suggest specific, numerical adjustments to the strategy rules. Do not be vague.",
-        "   - **Good Suggestion:** 'The 0.5 * ATR stop-loss is being hit frequently on minor pullbacks. Recommend testing a wider stop-loss of 0.7 * ATR to better withstand noise.'",
-        "   - **Bad Suggestion:** 'Maybe change the strategy.'",
-        "3. **Format Response:** Provide your analysis in the following strict JSON format:",
+        "2. **Suggest Rule Adjustments:** Based on the patterns, suggest specific, numerical adjustments to the strategy rules.",
+        "3. **Suggest Position Sizing:** Based on the strategy's volatility and win-rate, recommend a standard position sizing rule as a percentage of bankroll. A common rule is 1-2%.",
+        "4. **Suggest Risk/Reward Ratio:** Analyze if the current 1.6:1 ratio is effective. If trades are often stopped out, suggest a wider stop (e.g., 1.2:1). If trades win but could have run further, suggest a larger target (e.g., 2:1).",
+        "5. **Format Response:** Provide your analysis in the following strict JSON format:",
     ]
 
     prompt = "\n".join(prompt_parts)
@@ -288,8 +288,10 @@ async def ai_strategy_review(trades: list[dict]):
                 "type": "OBJECT",
                 "properties": {
                     "observations": {"type": "STRING", "description": "A summary of the key patterns observed in the losing trades."},
-                    "recommendations": {"type": "STRING", "description": "Specific, actionable suggestions for rule adjustments."}
-                }, "required": ["observations", "recommendations"]
+                    "recommendations": {"type": "STRING", "description": "Specific, actionable suggestions for rule adjustments."},
+                    "suggested_position_size": {"type": "STRING", "description": "A suggested bankroll percentage to risk per trade, e.g., '1-2%'"},
+                    "suggested_risk_reward_ratio": {"type": "STRING", "description": "A suggested Reward-to-Risk ratio, e.g., '1.5:1'"}
+                }, "required": ["observations", "recommendations", "suggested_position_size", "suggested_risk_reward_ratio"]
             }
         }
     }
