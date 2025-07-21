@@ -153,6 +153,7 @@
                             <th scope="col" class="px-4 py-3">Type</th>
                             <th scope="col" class="px-4 py-3">Entry Price</th>
                             <th scope="col" class="px-4 py-3">Planned Exit</th>
+                            <th scope="col" class="px-4 py-3">Stop-Loss</th>
                             <th scope="col" class="px-4 py-3">Profit %</th>
                             <th scope="col" class="px-4 py-3">Status</th>
                             <th scope="col" class="px-4 py-3">AI Reasoning</th>
@@ -222,7 +223,7 @@
                 signalDisplay.innerHTML = `<div class="h-32 pulse bg-gray-700 rounded-md"></div>`;
                 performancePanel.innerHTML = `<div class="h-24 pulse bg-gray-700 rounded-md"></div>`;
                 newsPanel.innerHTML = `<div class="h-48 pulse bg-gray-700 rounded-md"></div>`;
-                historyTableBody.innerHTML = `<tr><td colspan="7" class="p-4"><div class="h-8 pulse bg-gray-700 rounded-md"></div></td></tr>`;
+                historyTableBody.innerHTML = `<tr><td colspan="8" class="p-4"><div class="h-8 pulse bg-gray-700 rounded-md"></div></td></tr>`;
                 findTradeBtn.disabled = true;
                 refreshBtn.disabled = true;
                 analyzeBtn.disabled = true;
@@ -289,7 +290,7 @@
             const updateHistoryTable = (trades) => {
                 allTrades = trades;
                 if (trades.length === 0) {
-                    historyTableBody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-gray-500">No trade history yet.</td></tr>`;
+                    historyTableBody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-gray-500">No trade history yet.</td></tr>`;
                     return;
                 }
                 let tableHTML = '';
@@ -301,9 +302,10 @@
                     
                     const entry = trade.entry_price;
                     const exit = trade.take_profit_price;
+                    const stop = trade.stop_loss_price;
                     let profitPct = (entry > 0) ? (((trade.signal_type === 'LONG' ? exit - entry : entry - exit) / entry) * 100) : 0;
 
-                    tableHTML += `<tr class="border-b border-gray-700 hover:bg-gray-700/30"><td class="px-4 py-4 font-medium whitespace-nowrap">${new Date(trade.timestamp).toLocaleString()}</td><td class="px-4 py-4"><span class="px-2 py-1 rounded-full text-xs font-semibold ${trade.signal_type === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${trade.signal_type}</span></td><td class="px-4 py-4">$${entry.toFixed(8)}</td><td class="px-4 py-4">$${exit.toFixed(8)}</td><td class="px-4 py-4 font-semibold ${profitPct >= 0 ? 'text-green-400' : 'text-red-400'}">${profitPct.toFixed(2)}%</td><td class="px-4 py-4"><div class="flex items-center space-x-2 ${statusColor}"><i data-lucide="${statusIcon}"></i><span class="capitalize">${trade.status}</span></div></td><td class="px-4 py-4 text-gray-400 italic max-w-xs truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning}</td></tr>`;
+                    tableHTML += `<tr class="border-b border-gray-700 hover:bg-gray-700/30"><td class="px-4 py-4 font-medium whitespace-nowrap">${new Date(trade.timestamp).toLocaleString()}</td><td class="px-4 py-4"><span class="px-2 py-1 rounded-full text-xs font-semibold ${trade.signal_type === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${trade.signal_type}</span></td><td class="px-4 py-4">$${entry.toFixed(8)}</td><td class="px-4 py-4">$${exit.toFixed(8)}</td><td class="px-4 py-4">$${stop.toFixed(8)}</td><td class="px-4 py-4 font-semibold ${profitPct >= 0 ? 'text-green-400' : 'text-red-400'}">${profitPct.toFixed(2)}%</td><td class="px-4 py-4"><div class="flex items-center space-x-2 ${statusColor}"><i data-lucide="${statusIcon}"></i><span class="capitalize">${trade.status}</span></div></td><td class="px-4 py-4 text-gray-400 italic max-w-xs truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning}</td></tr>`;
                 });
                 historyTableBody.innerHTML = tableHTML;
             };
