@@ -84,11 +84,12 @@
         </div>
 
         <!-- Stats Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
             <div id="price-card" class="card p-4 md:p-6"></div>
             <div id="change-card" class="card p-4 md:p-6"></div>
             <div id="daily-range-card" class="card p-4 md:p-6"></div>
             <div id="volume-card" class="card p-4 md:p-6"></div>
+            <div id="bankroll-card" class="card p-4 md:p-6"></div> <!-- NEW -->
         </div>
 
         <!-- Main Content: Chart and AI Signal -->
@@ -197,6 +198,7 @@
             const changeCard = document.getElementById('change-card');
             const dailyRangeCard = document.getElementById('daily-range-card');
             const volumeCard = document.getElementById('volume-card');
+            const bankrollCard = document.getElementById('bankroll-card'); // NEW
             const signalDisplay = document.getElementById('signal-display');
             const performancePanel = document.getElementById('performance-panel');
             const newsPanel = document.getElementById('news-panel');
@@ -220,6 +222,7 @@
                 changeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
                 dailyRangeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
                 volumeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
+                bankrollCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`; // NEW
                 signalDisplay.innerHTML = `<div class="h-32 pulse bg-gray-700 rounded-md"></div>`;
                 performancePanel.innerHTML = `<div class="h-24 pulse bg-gray-700 rounded-md"></div>`;
                 newsPanel.innerHTML = `<div class="h-48 pulse bg-gray-700 rounded-md"></div>`;
@@ -273,6 +276,27 @@
                 performancePanel.innerHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="bar-chart" class="mr-2 text-indigo-400"></i> Performance</h3><div class="grid grid-cols-2 gap-4 text-center"><div><p class="text-3xl font-bold text-white">${totalTrades}</p><p class="text-sm text-gray-400">Total Signals</p></div><div><p class="text-3xl font-bold text-green-400">${accuracy}%</p><p class="text-sm text-gray-400">Accuracy</p></div></div>`;
             };
 
+            // NEW: Function to calculate and display simulated bankroll
+            const updateBankroll = (trades) => {
+                let bankroll = 100.0;
+                const riskPercentage = 0.02; // 2% risk per trade
+                const rewardRatio = 1.5;
+
+                const completedTrades = trades.filter(t => t.status === 'win' || t.status === 'loss').reverse(); // Oldest to newest
+
+                for (const trade of completedTrades) {
+                    const riskAmount = bankroll * riskPercentage;
+                    if (trade.status === 'win') {
+                        bankroll += riskAmount * rewardRatio;
+                    } else {
+                        bankroll -= riskAmount;
+                    }
+                }
+                
+                const isPositive = bankroll >= 100;
+                bankrollCard.innerHTML = `<div class="flex items-center justify-between mb-2"><p class="text-sm text-gray-400">Simulated Bankroll</p><i data-lucide="dollar-sign" class="${isPositive ? 'text-green-400' : 'text-red-400'}"></i></div><h3 class="text-2xl md:text-3xl font-bold text-white">$${bankroll.toFixed(2)}</h3>`;
+            };
+
             const updateNews = (news) => {
                 let newsHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="rss" class="mr-2 text-indigo-400"></i> Latest Crypto News</h3>`;
                 if (news.length > 0) {
@@ -320,8 +344,10 @@
                     const res = await fetch(`${API_BASE_URL}/get-all-trades`);
                     if (!res.ok) throw new Error('Failed to fetch trade history.');
                     const data = await res.json();
-                    updatePerformance(data.trades || []);
-                    updateHistoryTable(data.trades || []);
+                    const trades = data.trades || [];
+                    updatePerformance(trades);
+                    updateHistoryTable(trades);
+                    updateBankroll(trades); // NEW
                 } catch (err) { showError(err.message); }
             };
 
