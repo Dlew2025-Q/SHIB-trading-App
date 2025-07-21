@@ -166,7 +166,7 @@ async def get_crypto_news_endpoint(limit: int):
     ]
     return {"news": news_items[:limit]}
 
-# --- DAY TRADER AI SIGNAL ---
+# --- AI SIGNAL WITH UPGRADED STRATEGY ---
 @app.post("/ai-trade-signal")
 async def ai_trade_signal(request_body: dict):
     current_price = request_body.get("current_price")
@@ -175,42 +175,41 @@ async def ai_trade_signal(request_body: dict):
     if not all([current_price, historical_ohlc]):
         raise HTTPException(status_code=400, detail="Missing required data for AI signal.")
 
-    def calculate_sma(series, period):
-        if len(series) < period: return None
-        return sum(series[-period:]) / period
-
     def calculate_atr(ohlc_data, period=14):
         if len(ohlc_data) < period + 1: return None
         true_ranges = [max(d[2] - d[3], abs(d[2] - ohlc_data[i-1][4]), abs(d[3] - ohlc_data[i-1][4])) for i, d in enumerate(ohlc_data) if i > 0]
         if not true_ranges: return None
         return np.mean(true_ranges[-period:])
 
-    closing_prices = [d[4] for d in historical_ohlc]
-    
-    price_sma_10 = calculate_sma(closing_prices, 10)
+    # Calculate indicators based on the last 30 days of data
+    if len(historical_ohlc) < 4: # Need at least 3 previous candles + current
+        raise HTTPException(status_code=500, detail="Not enough historical data for analysis.")
+
     atr_14 = calculate_atr(historical_ohlc, 14)
+    if not atr_14:
+        raise HTTPException(status_code=500, detail="Could not calculate ATR.")
 
-    if not all([price_sma_10, atr_14]):
-        raise HTTPException(status_code=500, detail="Could not calculate necessary technical indicators.")
-
-    yesterday_ohlc = historical_ohlc[-1]
-    yesterday_open, yesterday_close = yesterday_ohlc[1], yesterday_ohlc[4]
+    # Get the high and low of the previous 3 candles
+    high_3_day = max(d[2] for d in historical_ohlc[-4:-1])
+    low_3_day = min(d[3] for d in historical_ohlc[-4:-1])
 
     prompt_parts = [
-        "You are a trading analyst. Your task is to evaluate a simple momentum strategy with an aggressive, short-term exit strategy and generate a signal if the conditions are met.",
-        "\n--- Strategy Rules ---",
-        "1. **Regime Filter:** LONG if Current Price > 10-Day SMA; SHORT if Current Price < 10-Day SMA.",
-        "2. **Entry Signal:** Previous Green Candle (Close > Open) for LONG; Previous Red Candle (Close < Open) for SHORT.",
-        "3. **Dynamic Exits (ATR) - Day Trader Version:** Calculate exit points using the provided 14-day Average True Range (ATR).",
-        "   - **Take-Profit:** Entry Price +/- (0.8 * ATR)",
-        "   - **Stop-Loss:** Entry Price -/+ (0.5 * ATR)",
-        "4. **Final Decision:** A trade signal is only generated if ALL conditions for that direction are met. If any condition fails, you MUST return a 'NEUTRAL' signal.",
+        "You are a trading analyst. Your task is to evaluate a breakout strategy and generate a signal if the conditions are met.",
+        "\n--- Strategy Rules (Version 3.0) ---",
+        "1. **Entry Signal (Breakout):**",
+        "   - **LONG:** Enter ONLY if the Current Price is GREATER than the High of the previous 3 candles.",
+        "   - **SHORT:** Enter ONLY if the Current Price is LESS than the Low of the previous 3 candles.",
+        "2. **Dynamic Exits (ATR):** Calculate exit points using the provided 14-day Average True Range (ATR).",
+        "   - **Take-Profit:** Entry Price +/- (1.5 * ATR)",
+        "   - **Stop-Loss:** Entry Price -/+ (1.0 * ATR)",
+        "3. **Final Decision:** A trade signal is only generated if a breakout condition is met. If neither condition is met, you MUST return a 'NEUTRAL' signal.",
+
         "\n--- Data Provided for Analysis ---",
         f"- Current Price (for Entry): ${current_price}",
-        f"- Previous Day's Open: ${yesterday_open}",
-        f"- Previous Day's Close: ${yesterday_close}",
-        f"- 10-Day Price SMA: ${price_sma_10:.8f}",
+        f"- High of previous 3 candles: ${high_3_day:.8f}",
+        f"- Low of previous 3 candles: ${low_3_day:.8f}",
         f"- 14-Day ATR: ${atr_14:.8f}",
+        
         "\n--- Your Task ---",
         "Follow the rules to generate a signal and its corresponding exit prices. Provide your response in the following strict JSON format.",
     ]
@@ -260,14 +259,13 @@ async def ai_strategy_review(trades: list[dict]):
     prompt_parts = [
         "You are an expert quantitative trading strategist. Your task is to analyze the performance of a trading algorithm and provide a full analysis including a portfolio simulation.",
         "\n--- Current Strategy Rules ---",
-        "1. **Regime Filter:** LONG only if Price > 10-Day SMA; SHORT only if Price < 10-Day SMA.",
-        "2. **Entry Signal:** Previous Green Candle for LONG; Previous Red Candle for SHORT.",
-        "3. **Exits:** Take-Profit at 0.8 * ATR; Stop-Loss at 0.5 * ATR. (This is a 1.6-to-1 Reward/Risk Ratio).",
+        "1. **Entry Signal:** LONG if Price > High of last 3 candles; SHORT if Price < Low of last 3 candles.",
+        "2. **Exits:** Take-Profit at 1.5 * ATR; Stop-Loss at 1.0 * ATR. (This is a 1.5-to-1 Reward/Risk Ratio).",
         "\n--- Recent Completed Trade History (Oldest to Newest) ---",
         trade_history_str,
         "\n--- Your Analysis Task (MUST COMPLETE ALL PARTS) ---",
-        "1. **Portfolio Simulation:** Run a simulation with a starting bankroll of $10,000. For each trade, invest 2% of the current bankroll. A 'win' earns 1% profit on the invested amount; a 'loss' incurs a 0.625% loss. Calculate the final bankroll and total percentage return.",
-        "2. **Identify Patterns:** Analyze the losing trades. Is there a common reason for failure? (e.g., stop-loss too tight, entering too early).",
+        "1. **Portfolio Simulation:** Run a simulation with a starting bankroll of $10,000. For each trade, invest 2% of the current bankroll. A 'win' earns a profit based on the 1.5 reward/risk ratio (e.g., +3%); a 'loss' incurs a loss based on the risk (e.g., -2%). Calculate the final bankroll and total percentage return.",
+        "2. **Identify Patterns:** Analyze the losing trades. Is there a common reason for failure? (e.g., false breakouts, stop-loss too tight).",
         "3. **Suggest Rule Adjustments:** Based on the patterns, suggest specific, numerical adjustments to the strategy rules.",
         "4. **Suggest Position Sizing & Risk/Reward:** Based on the simulation, recommend a position size (% of bankroll) and a Reward/Risk ratio.",
         "5. **Format Response:** You MUST provide your complete analysis in the following strict JSON format, filling all five keys.",
@@ -303,7 +301,6 @@ async def ai_strategy_review(trades: list[dict]):
         return json.loads(ai_response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during AI strategy review: {e}")
-
 
 @app.post("/save-trade")
 async def save_trade(trade_data: dict):
