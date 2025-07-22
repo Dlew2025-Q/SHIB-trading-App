@@ -63,7 +63,7 @@ async def get_market_data():
             price_res.raise_for_status()
             current_price = price_res.json()['market_data']['current_price']['usd']
 
-            # Fetch historical data (30 days needed for 10-day SMA)
+            # Fetch historical data (30 days needed for SMAs)
             ohlc_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/ohlc?vs_currency=usd&days=30"
             ohlc_res = await client.get(ohlc_url, headers=headers, timeout=10)
             ohlc_res.raise_for_status()
@@ -74,7 +74,7 @@ async def get_market_data():
         return None
 
 async def get_ai_trade_signal(market_data):
-    """Calls the Gemini AI to get a trade signal based on the simple momentum strategy."""
+    """Calls the Gemini AI to get a trade signal based on the latest tuned strategy."""
     def calculate_sma(series, period):
         if len(series) < period: return None
         return sum(series[-period:]) / period
@@ -96,24 +96,25 @@ async def get_ai_trade_signal(market_data):
     yesterday_ohlc = market_data['historical_ohlc'][-1]
     yesterday_open, yesterday_close = yesterday_ohlc[1], yesterday_ohlc[4]
 
-    # UPDATED PROMPT with more aggressive exit strategy
     prompt_parts = [
-        "You are a trading analyst. Your task is to evaluate a simple momentum strategy with an aggressive, short-term exit strategy and generate a signal if the conditions are met.",
-        "\n--- Strategy Rules ---",
+        "You are a trading analyst. Your task is to evaluate a momentum strategy with newly tuned parameters and generate a signal if the conditions are met.",
+        "\n--- Strategy Rules (Tuned Version) ---",
         "1. **Regime Filter:** LONG if Current Price > 10-Day SMA; SHORT if Current Price < 10-Day SMA.",
         "2. **Entry Signal:** Previous Green Candle (Close > Open) for LONG; Previous Red Candle (Close < Open) for SHORT.",
-        "3. **Dynamic Exits (ATR) - Day Trader Version:** Calculate exit points using the provided 14-day Average True Range (ATR).",
-        "   - **Take-Profit:** Entry Price +/- (0.8 * ATR)  <-- TIGHTER TARGET",
-        "   - **Stop-Loss:** Entry Price -/+ (0.5 * ATR)   <-- TIGHTER STOP",
+        "3. **Dynamic Exits (ATR - Tuned):** Calculate exit points using the provided 14-day Average True Range (ATR).",
+        "   - **Take-Profit:** Entry Price +/- (2.25 * ATR)",
+        "   - **Stop-Loss:** Entry Price -/+ (1.5 * ATR)",
         "4. **Final Decision:** A trade signal is only generated if ALL conditions for that direction are met. If any condition fails, you MUST return a 'NEUTRAL' signal.",
+
         "\n--- Data Provided for Analysis ---",
         f"- Current Price (for Entry): ${market_data['current_price']}",
         f"- Previous Day's Open: ${yesterday_open}",
         f"- Previous Day's Close: ${yesterday_close}",
         f"- 10-Day Price SMA: ${price_sma_10:.8f}",
         f"- 14-Day ATR: ${atr_14:.8f}",
+        
         "\n--- Your Task ---",
-        "Follow the rules to generate a signal and its corresponding exit prices. Provide your response in the following strict JSON format.",
+        "Follow the tuned rules to generate a signal and its corresponding exit prices. Provide your response in the following strict JSON format.",
     ]
     
     prompt = "\n".join(prompt_parts)
@@ -155,15 +156,15 @@ async def run_logging_loop():
         # 1. Fetch market data
         market_data = await get_market_data()
         if not market_data:
-            print("Failed to get market data. Retrying in 15 minutes.")
-            await asyncio.sleep(900) # UPDATED: 15 minutes
+            print("Failed to get market data. Retrying in 30 minutes.")
+            await asyncio.sleep(1800)
             continue
         
         # 2. Get AI signal
         ai_signal = await get_ai_trade_signal(market_data)
         if not ai_signal or ai_signal.get('signal_type') == 'NEUTRAL':
             print("AI signal is NEUTRAL. No signal logged.")
-            await asyncio.sleep(900) # UPDATED: 15 minutes
+            await asyncio.sleep(1800) # Sleep for 30 minutes
             continue
 
         # 3. Log the signal to the database
@@ -181,8 +182,8 @@ async def run_logging_loop():
         await save_signal_to_db(trade_to_log)
         
         # 4. Wait for the next cycle
-        print("Cycle complete. Sleeping for 15 minutes.")
-        await asyncio.sleep(900) # UPDATED: 15 minutes
+        print("Cycle complete. Sleeping for 30 minutes.")
+        await asyncio.sleep(1800)
 
 async def main():
     """Initializes the database connection and starts the logging loop."""
