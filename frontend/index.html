@@ -89,7 +89,7 @@
             <div id="change-card" class="card p-4 md:p-6"></div>
             <div id="daily-range-card" class="card p-4 md:p-6"></div>
             <div id="volume-card" class="card p-4 md:p-6"></div>
-            <div id="bankroll-card" class="card p-4 md:p-6"></div> <!-- NEW -->
+            <div id="bankroll-card" class="card p-4 md:p-6"></div>
         </div>
 
         <!-- Main Content: Chart and AI Signal -->
@@ -146,9 +146,10 @@
                     </button>
                 </div>
             </div>
-            <div class="overflow-x-auto">
+            <!-- MODIFIED: Added max-h-96 and overflow-auto for scrolling -->
+            <div class="overflow-auto max-h-96">
                 <table class="w-full text-sm text-left text-gray-300">
-                    <thead class="text-xs text-gray-400 uppercase bg-gray-900/50">
+                    <thead class="text-xs text-gray-400 uppercase bg-gray-900/50 sticky top-0">
                         <tr>
                             <th scope="col" class="px-4 py-3">Date</th>
                             <th scope="col" class="px-4 py-3">Type</th>
@@ -198,7 +199,7 @@
             const changeCard = document.getElementById('change-card');
             const dailyRangeCard = document.getElementById('daily-range-card');
             const volumeCard = document.getElementById('volume-card');
-            const bankrollCard = document.getElementById('bankroll-card'); // NEW
+            const bankrollCard = document.getElementById('bankroll-card');
             const signalDisplay = document.getElementById('signal-display');
             const performancePanel = document.getElementById('performance-panel');
             const newsPanel = document.getElementById('news-panel');
@@ -222,7 +223,7 @@
                 changeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
                 dailyRangeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
                 volumeCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
-                bankrollCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`; // NEW
+                bankrollCard.innerHTML = `<div class="h-16 pulse bg-gray-700 rounded-md"></div>`;
                 signalDisplay.innerHTML = `<div class="h-32 pulse bg-gray-700 rounded-md"></div>`;
                 performancePanel.innerHTML = `<div class="h-24 pulse bg-gray-700 rounded-md"></div>`;
                 newsPanel.innerHTML = `<div class="h-48 pulse bg-gray-700 rounded-md"></div>`;
@@ -276,13 +277,12 @@
                 performancePanel.innerHTML = `<h3 class="text-lg font-semibold text-white mb-4 flex items-center"><i data-lucide="bar-chart" class="mr-2 text-indigo-400"></i> Performance</h3><div class="grid grid-cols-2 gap-4 text-center"><div><p class="text-3xl font-bold text-white">${totalTrades}</p><p class="text-sm text-gray-400">Total Signals</p></div><div><p class="text-3xl font-bold text-green-400">${accuracy}%</p><p class="text-sm text-gray-400">Accuracy</p></div></div>`;
             };
 
-            // NEW: Function to calculate and display simulated bankroll
             const updateBankroll = (trades) => {
                 let bankroll = 100.0;
-                const riskPercentage = 0.02; // 2% risk per trade
+                const riskPercentage = 0.02;
                 const rewardRatio = 1.5;
 
-                const completedTrades = trades.filter(t => t.status === 'win' || t.status === 'loss').reverse(); // Oldest to newest
+                const completedTrades = trades.filter(t => t.status === 'win' || t.status === 'loss').reverse();
 
                 for (const trade of completedTrades) {
                     const riskAmount = bankroll * riskPercentage;
@@ -318,7 +318,8 @@
                     return;
                 }
                 let tableHTML = '';
-                trades.slice(0, 10).forEach(trade => {
+                // MODIFIED: Removed .slice(0, 10) to show all trades
+                trades.forEach(trade => {
                     let statusIcon = 'minus-circle', statusColor = 'text-gray-500';
                     if (trade.status === 'win') { statusIcon = 'check-circle'; statusColor = 'text-green-500'; }
                     if (trade.status === 'loss') { statusIcon = 'x-circle'; statusColor = 'text-red-500'; }
@@ -347,7 +348,7 @@
                     const trades = data.trades || [];
                     updatePerformance(trades);
                     updateHistoryTable(trades);
-                    updateBankroll(trades); // NEW
+                    updateBankroll(trades);
                 } catch (err) { showError(err.message); }
             };
 
@@ -467,10 +468,6 @@
                     reviewContent.innerHTML = `
                         <div class="space-y-3">
                             <div>
-                                <h4 class="font-semibold text-gray-100">Backtest Result:</h4>
-                                <p class="text-md font-semibold text-indigo-300">${review.backtest_result}</p>
-                            </div>
-                            <div>
                                 <h4 class="font-semibold text-gray-100">Observations:</h4>
                                 <p class="text-sm text-gray-300">${review.observations}</p>
                             </div>
@@ -478,20 +475,12 @@
                                 <h4 class="font-semibold text-gray-100">Recommendations:</h4>
                                 <p class="text-sm text-gray-300">${review.recommendations}</p>
                             </div>
-                            <div>
-                                <h4 class="font-semibold text-gray-100">Suggested Position Sizing:</h4>
-                                <p class="text-sm text-gray-300">${review.suggested_position_size}</p>
-                            </div>
-                            <div>
-                                <h4 class="font-semibold text-gray-100">Suggested Risk/Reward Ratio:</h4>
-                                <p class="text-sm text-gray-300">${review.suggested_risk_reward_ratio}</p>
-                            </div>
                         </div>`;
                 } catch(err) {
                     reviewContent.innerHTML = `<p class="text-red-400">Error: ${err.message}</p>`;
                 } finally {
                     analyzeBtn.disabled = false;
-                    analyzeBtnText.textContent = 'Analyze Performance';
+                    analyzeBtnText.textContent = 'Analyze & Suggest Improvements';
                 }
             };
             
