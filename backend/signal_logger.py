@@ -6,7 +6,7 @@ import httpx
 import asyncpg
 import json
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- Configuration ---
 # Load environment variables from the Render environment
@@ -36,7 +36,6 @@ async def save_signal_to_db(trade_data):
         print("Cannot save signal, no database connection.")
         return
     try:
-        # A new trade is always 'pending' until its outcome is checked later
         status = 'pending'
         await db_pool.execute('''
             INSERT INTO simulated_trades (id, signal_type, entry_price, take_profit_price, stop_loss_price, position_size, status, timestamp, ai_reasoning)
@@ -50,6 +49,19 @@ async def save_signal_to_db(trade_data):
     except Exception as e:
         print(f"Error saving signal to DB: {e}")
 
+# NEW: Function to check for any open/pending trades
+async def check_for_open_trade():
+    """Checks if a trade with status 'pending' or 'open' already exists."""
+    if not db_pool: return False
+    try:
+        open_trade = await db_pool.fetchval(
+            "SELECT id FROM simulated_trades WHERE status = 'pending' OR status = 'open' LIMIT 1;"
+        )
+        return open_trade is not None
+    except Exception as e:
+        print(f"Error checking for open trades: {e}")
+        return False # Default to allowing a trade if check fails
+
 # --- AI and Data Fetching Functions ---
 async def get_market_data():
     """Fetches the latest price and historical OHLC data from CoinGecko."""
@@ -57,14 +69,13 @@ async def get_market_data():
         async with httpx.AsyncClient() as client:
             headers = {"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}
             
-            # Fetch current price
             price_url = 'https://api.coingecko.com/api/v3/coins/shiba-inu?market_data=true'
             price_res = await client.get(price_url, headers=headers, timeout=10)
             price_res.raise_for_status()
             current_price = price_res.json()['market_data']['current_price']['usd']
 
-            # Fetch historical data (30 days needed for SMAs)
-            ohlc_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/ohlc?vs_currency=usd&days=30"
+            # Fetch 60 days of data for 50-day SMA calculation
+            ohlc_url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/ohlc?vs_currency=usd&days=60"
             ohlc_res = await client.get(ohlc_url, headers=headers, timeout=10)
             ohlc_res.raise_for_status()
             
@@ -87,21 +98,27 @@ async def get_ai_trade_signal(market_data):
 
     closing_prices = [d[4] for d in market_data['historical_ohlc']]
     price_sma_10 = calculate_sma(closing_prices, 10)
+    price_sma_50 = calculate_sma(closing_prices, 50) # NEW
     atr_14 = calculate_atr(market_data['historical_ohlc'], 14)
 
-    if not all([price_sma_10, atr_14]):
+    if not all([price_sma_10, price_sma_50, atr_14]):
         print("Could not calculate necessary technical indicators.")
         return None
 
     yesterday_ohlc = market_data['historical_ohlc'][-1]
     yesterday_open, yesterday_close = yesterday_ohlc[1], yesterday_ohlc[4]
+    candle_body_size = abs(yesterday_close - yesterday_open)
 
     prompt_parts = [
         "You are a trading analyst. Your task is to evaluate a momentum strategy with newly tuned parameters and generate a signal if the conditions are met.",
-        "\n--- Strategy Rules (Tuned Version) ---",
-        "1. **Regime Filter:** LONG if Current Price > 10-Day SMA; SHORT if Current Price < 10-Day SMA.",
-        "2. **Entry Signal:** Previous Green Candle (Close > Open) for LONG; Previous Red Candle (Close < Open) for SHORT.",
-        "3. **Dynamic Exits (ATR - Tuned):** Calculate exit points using the provided 14-day Average True Range (ATR).",
+        "\n--- Strategy Rules (Tuned Version 4.0) ---",
+        "1. **Regime Filter (Enhanced):**",
+        "   - **LONG:** Current Price > 10-Day SMA.",
+        "   - **SHORT:** Current Price < 10-Day SMA AND Current Price < 50-Day SMA.",
+        "2. **Entry Signal (Refined):**",
+        "   - **LONG:** Previous candle must be green (Close > Open).",
+        "   - **SHORT:** Previous candle must be red (Close < Open) AND its body size (Open - Close) must be > (0.75 * ATR).",
+        "3. **Dynamic Exits (ATR):** Calculate exit points using the provided 14-day Average True Range (ATR).",
         "   - **Take-Profit:** Entry Price +/- (2.25 * ATR)",
         "   - **Stop-Loss:** Entry Price -/+ (1.5 * ATR)",
         "4. **Final Decision:** A trade signal is only generated if ALL conditions for that direction are met. If any condition fails, you MUST return a 'NEUTRAL' signal.",
@@ -110,7 +127,9 @@ async def get_ai_trade_signal(market_data):
         f"- Current Price (for Entry): ${market_data['current_price']}",
         f"- Previous Day's Open: ${yesterday_open}",
         f"- Previous Day's Close: ${yesterday_close}",
+        f"- Previous Day's Candle Body Size: ${candle_body_size:.8f}",
         f"- 10-Day Price SMA: ${price_sma_10:.8f}",
+        f"- 50-Day Price SMA: ${price_sma_50:.8f}",
         f"- 14-Day ATR: ${atr_14:.8f}",
         
         "\n--- Your Task ---",
@@ -153,21 +172,27 @@ async def run_logging_loop():
     while True:
         print(f"\n--- New Logging Cycle: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---")
         
-        # 1. Fetch market data
+        # 1. NEW: Check if a trade is already open/pending
+        if await check_for_open_trade():
+            print("An open or pending trade already exists. Skipping cycle.")
+            await asyncio.sleep(1800) # Sleep for 30 minutes
+            continue
+
+        # 2. Fetch market data
         market_data = await get_market_data()
         if not market_data:
             print("Failed to get market data. Retrying in 30 minutes.")
             await asyncio.sleep(1800)
             continue
         
-        # 2. Get AI signal
+        # 3. Get AI signal
         ai_signal = await get_ai_trade_signal(market_data)
         if not ai_signal or ai_signal.get('signal_type') == 'NEUTRAL':
             print("AI signal is NEUTRAL. No signal logged.")
             await asyncio.sleep(1800) # Sleep for 30 minutes
             continue
 
-        # 3. Log the signal to the database
+        # 4. Log the signal to the database
         print(f"AI generated a {ai_signal['signal_type']} signal. Logging to database.")
         trade_to_log = {
             "id": int(datetime.now().timestamp() * 1000),
@@ -181,7 +206,7 @@ async def run_logging_loop():
         }
         await save_signal_to_db(trade_to_log)
         
-        # 4. Wait for the next cycle
+        # 5. Wait for the next cycle
         print("Cycle complete. Sleeping for 30 minutes.")
         await asyncio.sleep(1800)
 
